@@ -93,7 +93,7 @@ func RequireAuth(r *http.Request, rdb *redis.Client) (*AuthResult, error) {
 		return nil, fmt.Errorf("parsing string into uuid: %w", err)
 	}
 
-	// verify exp this is happy route
+	// verify exp. this is happy route.
 	if accessTokenClaims.ExpiresAt.Time.Unix() > time.Now().Unix() {
 		return &AuthResult{Sub: subUuid, newAccessTokenCookie: nil}, nil
 	}

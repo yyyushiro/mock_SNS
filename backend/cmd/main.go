@@ -39,16 +39,17 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/auth/google/start", app.AuthenticationURIHandler)
 	mux.HandleFunc("GET /api/auth/callback/google", app.GetAccessTokenHandler)
-	mux.HandleFunc("POST /api/posts", app.makePostHandler)
-	mux.HandleFunc("GET /api/user/me/posts", app.getMyPostsHandler)
-	mux.HandleFunc("DELETE /api/posts/{id}", app.deletePostHandler)
-	mux.HandleFunc("POST /api/posts/{id}/likes", app.likePostHandler)
-	mux.HandleFunc("DELETE /api/posts/{id}/likes", app.undoLikePostHandler)
+	mux.HandleFunc("POST /api/posts", app.MakePostHandler)
+	mux.HandleFunc("GET /api/user/me/posts", app.GetMyPostsHandler)
+	mux.HandleFunc("DELETE /api/posts/{id}", app.DeletePostHandler)
+	mux.HandleFunc("POST /api/posts/{id}/likes", app.LikePostHandler)
+	mux.HandleFunc("DELETE /api/posts/{id}/likes", app.UndoLikePostHandler)
 	mux.HandleFunc("POST /api/auth/logout", app.LogOutHandler)
 
+	// Make sure the directory is valid.
 	if dir := strings.TrimSpace(os.Getenv("WEB_DIST_DIR")); dir != "" {
 		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
-			h := spaHandler(dir)
+			h := SpaHandler(dir)
 			mux.Handle("GET /{path...}", h)
 		}
 	}

@@ -8,7 +8,8 @@ import (
 	"strings"
 )
 
-func spaHandler(distDir string) http.Handler {
+// SpaHandler distributes static files in production.
+func SpaHandler(distDir string) http.Handler {
 	fs := http.FileServer(http.Dir(distDir))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {

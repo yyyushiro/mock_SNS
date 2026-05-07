@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func (a *App) getMyPostsHandler(w http.ResponseWriter, r *http.Request) {
+func (a *App) GetMyPostsHandler(w http.ResponseWriter, r *http.Request) {
 	result, err := RequireAuth(r, a.Rdb)
 	if err != nil {
 		log.Printf("Authorization: %s", err)
@@ -45,7 +45,7 @@ type makePostRequest struct {
 	Body string `json:"body"`
 }
 
-func (a *App) makePostHandler(w http.ResponseWriter, r *http.Request) {
+func (a *App) MakePostHandler(w http.ResponseWriter, r *http.Request) {
 	result, err := RequireAuth(r, a.Rdb)
 	if err != nil {
 		log.Printf("Authorization: %s", err)
@@ -86,7 +86,7 @@ func (a *App) makePostHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("made post successfully: %s", req.Body)
 }
 
-func (a *App) deletePostHandler(w http.ResponseWriter, r *http.Request) {
+func (a *App) DeletePostHandler(w http.ResponseWriter, r *http.Request) {
 	result, err := RequireAuth(r, a.Rdb)
 	if err != nil {
 		log.Printf("Authorization: %s", err)
@@ -128,7 +128,7 @@ func (a *App) deletePostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *App) likePostHandler(w http.ResponseWriter, r *http.Request) {
+func (a *App) LikePostHandler(w http.ResponseWriter, r *http.Request) {
 	result, err := RequireAuth(r, a.Rdb)
 	if err != nil {
 		log.Printf("Authorization: %s", err)
@@ -166,7 +166,7 @@ func (a *App) likePostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *App) undoLikePostHandler(w http.ResponseWriter, r *http.Request) {
+func (a *App) UndoLikePostHandler(w http.ResponseWriter, r *http.Request) {
 	result, err := RequireAuth(r, a.Rdb)
 	if err != nil {
 		log.Printf("Authorization: %s", err)
