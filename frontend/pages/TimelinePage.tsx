@@ -58,11 +58,16 @@ export default function TimeLinePage() {
                 await likePost(post.id)
             }
             setPosts((prev) =>
-                prev.map((p) =>
-                    p.id === post.id
-                        ? { ...p, liked_by_me: !p.liked_by_me }
-                        : p,
-                ),
+                prev.map((p) => {
+                    if (p.id !== post.id) return p
+                    const nextLiked = !p.liked_by_me
+                    const delta = nextLiked ? 1 : -1
+                    return {
+                        ...p,
+                        liked_by_me: nextLiked,
+                        like_count: Math.max(0, p.like_count + delta),
+                    }
+                }),
             )
         } catch (err: unknown) {
             const message =
@@ -155,7 +160,9 @@ export default function TimeLinePage() {
                                             disabled={busy}
                                             aria-pressed={liked}
                                             aria-label={
-                                                liked ? "Unlike" : "Like"
+                                                liked
+                                                    ? `Unlike, ${post.like_count} likes`
+                                                    : `Like, ${post.like_count} likes`
                                             }
                                             onClick={() => toggleLike(post)}
                                             style={{
@@ -177,7 +184,10 @@ export default function TimeLinePage() {
                                                 padding: "2px 8px",
                                             }}
                                         >
-                                            ♥
+                                            ♥{" "}
+                                            <span aria-hidden="true">
+                                                {post.like_count}
+                                            </span>
                                         </button>
                                     </li>
                                 )

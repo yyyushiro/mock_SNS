@@ -2,6 +2,7 @@ export type Post = {
     id: string
     body: string
     liked_by_me: boolean
+    like_count: number
 }
 
 export async function getMyPosts(): Promise<Post[]> {
@@ -19,11 +20,12 @@ export async function getMyPosts(): Promise<Post[]> {
     const data: unknown = await response.json()
     if (!Array.isArray(data)) return []
     return data.map((item) => {
-        const row = item as { id?: unknown; body?: unknown; liked_by_me?: unknown }
+        const row = item as { id?: unknown; body?: unknown; liked_by_me?: unknown; like_count?: unknown}
         return {
             id: String(row.id ?? ""),
             body: String(row.body ?? ""),
             liked_by_me: Boolean(row.liked_by_me),
+            like_count: Number(row.like_count)
         }
     })
 }
@@ -43,11 +45,17 @@ export async function makePost(body: string): Promise<Post> {
         throw new TypeError("Oops, we haven't got JSON!")
     }
     const raw: unknown = await response.json()
-    const row = raw as { id?: unknown; body?: unknown; liked_by_me?: unknown }
+    const row = raw as {
+        id?: unknown
+        body?: unknown
+        liked_by_me?: unknown
+        like_count?: unknown
+    }
     return {
         id: String(row.id ?? ""),
         body: String(row.body ?? ""),
         liked_by_me: Boolean(row.liked_by_me),
+        like_count: Number(row.like_count ?? 0),
     }
 }
 

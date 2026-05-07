@@ -16,6 +16,7 @@ type Post struct {
 	Body      string    `json:"body"`
 	CreatedAt time.Time `json:"created_at"`
 	LikedByMe bool      `json:"liked_by_me"`
+	LikeCount int       `json:"like_count"`
 }
 
 type Like struct {
@@ -68,9 +69,15 @@ func GetMyPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) ([]Po
 		if err := rows.Scan(&p.PostId, &p.Body, &p.LikedByMe); err != nil {
 			return nil, fmt.Errorf("Scanning posts: %w", err)
 		}
+
+		p.LikeCount, err = getLikeCount(p.PostId, pool, ctx)
+		if err != nil {
+			return nil, err
+		}
+
 		posts = append(posts, p)
 	}
-	// This error block catches whne the iteration finishes abnormally.
+	// This error block catches when the iteration finishes abnormally.
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("Scanned posts: %w", err)
 	}
@@ -109,4 +116,14 @@ func UndoLikePost(likerId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Con
 	}
 
 	return &l, nil
+}
+
+func getLikeCount(postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (int, error) {
+	var count int
+	// While this query is related to multiple rows, since it eventually returns a single value, user QueryRow().
+	err := pool.QueryRow(ctx, `SELECT COUNT(post_id) FROM likes WHERE post_id = $1`, postId).Scan(&count)
+	if err != nil {
+		return -1, fmt.Errorf("Counted likes: %w", err)
+	}
+	return count, nil
 }
