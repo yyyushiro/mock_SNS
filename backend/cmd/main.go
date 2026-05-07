@@ -39,12 +39,12 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/auth/google/start", app.AuthenticationURIHandler)
 	mux.HandleFunc("GET /api/auth/callback/google", app.GetAccessTokenHandler)
-	mux.HandleFunc("POST /api/posts", app.MakePostHandler)
-	mux.HandleFunc("GET /api/user/me/posts", app.GetMyPostsHandler)
-	mux.HandleFunc("DELETE /api/posts/{id}", app.DeletePostHandler)
-	mux.HandleFunc("POST /api/posts/{id}/likes", app.LikePostHandler)
-	mux.HandleFunc("DELETE /api/posts/{id}/likes", app.UndoLikePostHandler)
-	mux.HandleFunc("POST /api/auth/logout", app.LogOutHandler)
+	mux.HandleFunc("POST /api/posts", app.WithAuth(app.MakePostHandler))
+	mux.HandleFunc("GET /api/user/me/posts", app.WithAuth(app.GetMyPostsHandler))
+	mux.HandleFunc("DELETE /api/posts/{id}", app.WithAuth(app.DeletePostHandler))
+	mux.HandleFunc("POST /api/posts/{id}/likes", app.WithAuth(app.LikePostHandler))
+	mux.HandleFunc("DELETE /api/posts/{id}/likes", app.WithAuth(app.UndoLikePostHandler))
+	mux.HandleFunc("POST /api/auth/logout", app.WithAuth(app.LogOutHandler))
 
 	// Make sure the directory is valid.
 	if dir := strings.TrimSpace(os.Getenv("WEB_DIST_DIR")); dir != "" {

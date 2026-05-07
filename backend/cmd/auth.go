@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -25,7 +26,7 @@ func generateRefreshToken() (string, error) {
 	return base64.URLEncoding.EncodeToString(b), nil
 }
 
-// makeSignedAccessToken generates generates JWT with the given sub.
+// makeSignedAccessToken generates JWT with the given sub.
 func makeSignedAccessToken(sub uuid.UUID) (string, error) {
 	accessTokenDuration, err := strconv.Atoi(os.Getenv("ACCESS_TOKEN_DURATION"))
 	if err != nil {
@@ -73,16 +74,60 @@ func verifyAccessTokenJWT(tokenString string, secret []byte) (*accessTokenClaims
 // You can expand this struct if you want to get more information from authorization later.
 type AuthResult struct {
 	Sub                  uuid.UUID
-	newAccessTokenCookie *http.Cookie
+	NewAccessTokenCookie *http.Cookie
 }
 
-// RequireAuth is used in every API call and verifies the user's access token.
+// Empty struct is often used as a key because it avoids conflicts, and it is comparable.
+type authContextKey struct{}
+
+// ContextWithAuth attaches an AuthResult to r for handlers wrapped by WithAuth.
+// Handlers need the AuthResult such as for manipulating the database.
+func ContextWithAuth(r *http.Request, ar *AuthResult) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), authContextKey{}, ar))
+}
+
+// AuthFromRequest returns the AuthResult set by WithAuth, or false if missing.
+func AuthFromRequest(r *http.Request) (*AuthResult, bool) {
+	ar, ok := r.Context().Value(authContextKey{}).(*AuthResult)
+	if !ok || ar == nil {
+		return nil, false
+	}
+	return ar, true
+}
+
+// RequireAuth verifies the user's session via access or refresh token.
 func RequireAuth(r *http.Request, rdb *redis.Client) (*AuthResult, error) {
 	accessToken, err := GetAndVerifyCookie(r, "access_token")
 	if err != nil {
-		return nil, fmt.Errorf("Verifying access token Cookie: %w", err)
-	}
+		// Check if the refresh token is present.
+		refreshToken, err := GetAndVerifyCookie(r, "refresh_token")
+		if err != nil {
+			return nil, fmt.Errorf("Verifying refresh token Cookie: %w", err)
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		subStr, err := rdb.Get(ctx, refreshToken).Result()
+		if err != nil {
+			return nil, fmt.Errorf("Getting sub from redis: %w", err)
+		}
+		log.Print(subStr)
+		subUuid, err := uuid.Parse(subStr)
+		if err != nil {
+			return nil, fmt.Errorf("Parsing sub into uuid: %w", err)
+		}
 
+		// found sub, so issue new access token. Access token is made from a sub.
+		newSignedAccessToken, err := makeSignedAccessToken(subUuid)
+		if err != nil {
+			return nil, fmt.Errorf("Making new access token: %w", err)
+		}
+
+		// return the new access token cookie.
+		return &AuthResult{
+			Sub:                  subUuid,
+			NewAccessTokenCookie: MakeSignedCookie("access_token", newSignedAccessToken, 900),
+		}, nil
+	}
 	accessTokenClaims, err := verifyAccessTokenJWT(accessToken, []byte(os.Getenv("JWT_SECRET")))
 	if err != nil {
 		return nil, fmt.Errorf("Verifying access token JWT: %w", err)
@@ -93,37 +138,5 @@ func RequireAuth(r *http.Request, rdb *redis.Client) (*AuthResult, error) {
 		return nil, fmt.Errorf("parsing string into uuid: %w", err)
 	}
 
-	// verify exp. this is happy route.
-	if accessTokenClaims.ExpiresAt.Time.Unix() > time.Now().Unix() {
-		return &AuthResult{Sub: subUuid, newAccessTokenCookie: nil}, nil
-	}
-
-	// if exp is invalid, then check refreshtoken.
-	refreshToken, err := GetAndVerifyCookie(r, "refresh_token")
-	if err != nil {
-		return nil, fmt.Errorf("Verifying refresh token Cookie: %w", err)
-	}
-
-	// get sub by redis and refreshtoken. If it is not found, then expired.
-	subStr, err := rdb.Get(context.Background(), refreshToken).Result()
-	if err != nil {
-		return nil, fmt.Errorf("Getting sub from redis: %w", err)
-	}
-
-	subUuid, err = uuid.Parse(subStr)
-	if err != nil {
-		return nil, fmt.Errorf("Parsing sub into uuid: %w", err)
-	}
-
-	// found sub, so issue new access token.
-	newSignedAccessToken, err := makeSignedAccessToken(subUuid)
-	if err != nil {
-		return nil, fmt.Errorf("Making new access token: %w", err)
-	}
-
-	// return the new access token cookie.
-	return &AuthResult{
-		Sub:                  subUuid,
-		newAccessTokenCookie: MakeSignedCookie("access_token", newSignedAccessToken, 900),
-	}, nil
+	return &AuthResult{Sub: subUuid, NewAccessTokenCookie: nil}, nil
 }

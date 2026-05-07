@@ -13,10 +13,9 @@ import (
 )
 
 func (a *App) GetMyPostsHandler(w http.ResponseWriter, r *http.Request) {
-	result, err := RequireAuth(r, a.Rdb)
-	if err != nil {
-		log.Printf("Authorization: %s", err)
-		http.Error(w, "invalid session", http.StatusUnauthorized)
+	result, ok := AuthFromRequest(r)
+	if !ok {
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
@@ -46,10 +45,9 @@ type makePostRequest struct {
 }
 
 func (a *App) MakePostHandler(w http.ResponseWriter, r *http.Request) {
-	result, err := RequireAuth(r, a.Rdb)
-	if err != nil {
-		log.Printf("Authorization: %s", err)
-		http.Error(w, "invalid session", http.StatusUnauthorized)
+	result, ok := AuthFromRequest(r)
+	if !ok {
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	var req makePostRequest
@@ -87,10 +85,9 @@ func (a *App) MakePostHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) DeletePostHandler(w http.ResponseWriter, r *http.Request) {
-	result, err := RequireAuth(r, a.Rdb)
-	if err != nil {
-		log.Printf("Authorization: %s", err)
-		http.Error(w, "invalid session", http.StatusUnauthorized)
+	result, ok := AuthFromRequest(r)
+	if !ok {
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	idStr := r.PathValue("id")
@@ -129,10 +126,9 @@ func (a *App) DeletePostHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) LikePostHandler(w http.ResponseWriter, r *http.Request) {
-	result, err := RequireAuth(r, a.Rdb)
-	if err != nil {
-		log.Printf("Authorization: %s", err)
-		http.Error(w, "invalid session", http.StatusUnauthorized)
+	result, ok := AuthFromRequest(r)
+	if !ok {
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
@@ -167,10 +163,9 @@ func (a *App) LikePostHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) UndoLikePostHandler(w http.ResponseWriter, r *http.Request) {
-	result, err := RequireAuth(r, a.Rdb)
-	if err != nil {
-		log.Printf("Authorization: %s", err)
-		http.Error(w, "invalid session", http.StatusUnauthorized)
+	result, ok := AuthFromRequest(r)
+	if !ok {
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 

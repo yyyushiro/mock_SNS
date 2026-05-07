@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"log"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -85,4 +87,19 @@ func setUpOAuth2AndOIDC(ctx context.Context) (*oauth2.Config, *oidc.IDTokenVerif
 	oidcVerifier := provider.Verifier(&oidcConf)
 
 	return oauth2Conf, oidcVerifier, nil
+}
+
+func (a *App) WithAuth(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		result, err := RequireAuth(r, a.Rdb)
+		if err != nil {
+			log.Printf("Authorization: %s", err)
+			http.Error(w, "invalid session", http.StatusUnauthorized)
+			return
+		}
+		if c := result.NewAccessTokenCookie; c != nil {
+			http.SetCookie(w, c)
+		}
+		handler(w, ContextWithAuth(r, result))
+	}
 }

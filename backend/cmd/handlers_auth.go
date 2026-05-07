@@ -110,6 +110,7 @@ func (a *App) GetAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 	var userId uuid.UUID
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
+	// If the sub already exists, it technically updates the existing sub with the new one. However, since they are the same, it does nothing and just returns the user id.
 	err = a.Pool.QueryRow(ctx, "INSERT INTO users (google_sub) VALUES ($1) ON CONFLICT (google_sub) DO UPDATE SET google_sub = EXCLUDED.google_sub RETURNING id", sub).Scan(&userId)
 	if err != nil {
 		log.Printf("QueryRow failed: %v", err)
@@ -145,7 +146,7 @@ func (a *App) GetAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel = context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	err = a.Rdb.Set(ctx, refreshToken, sub, time.Duration(refreshTokenDuration)*time.Hour).Err()
+	err = a.Rdb.Set(ctx, refreshToken, userId.String(), time.Duration(refreshTokenDuration)*time.Hour).Err()
 	if err != nil {
 		log.Printf("storing refresh token into Redis: %s", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -166,13 +167,6 @@ func (a *App) GetAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) LogOutHandler(w http.ResponseWriter, r *http.Request) {
-	_, err := RequireAuth(r, a.Rdb)
-	if err != nil {
-		log.Printf("Authorization: %s", err)
-		http.Error(w, "invalid session", http.StatusUnauthorized)
-		return
-	}
-	// delete access token and refresh token.
 	accessTokenDeleteCookie := MakeDeleteCookie("access_token")
 	http.SetCookie(w, accessTokenDeleteCookie)
 
