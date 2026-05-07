@@ -84,6 +84,37 @@ func GetMyPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) ([]Po
 	return posts, nil
 }
 
+func GetPublicPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) ([]Post, error) {
+	rows, err := pool.Query(ctx, `SELECT id, body,
+	EXISTS (
+		SELECT 1 FROM likes
+		WHERE likes.user_id = $1 AND likes.post_id = posts.id
+	) FROM posts WHERE posts.user_id <> $1`, userId)
+	if err != nil {
+		return nil, fmt.Errorf("Getting post rows: %w", err)
+	}
+	defer rows.Close()
+	var posts []Post
+	for rows.Next() {
+		var p Post
+		if err := rows.Scan(&p.PostId, &p.Body, &p.LikedByMe); err != nil {
+			return nil, fmt.Errorf("Scanning posts: %w", err)
+		}
+
+		p.LikeCount, err = getLikeCount(p.PostId, pool, ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		posts = append(posts, p)
+	}
+	// This error block catches when the iteration finishes abnormally.
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("Scanned posts: %w", err)
+	}
+	return posts, nil
+}
+
 // LikePost increments likes with the check of no duplicates.
 func LikePost(likerId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (*Like, error) {
 	// I'm not sure if I have to validate likerid and postid. I will do them later if needed.

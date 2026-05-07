@@ -1,14 +1,13 @@
 import { useEffect, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import {
-    getMyPosts,
+    getPublicPosts,
     likePost,
-    logout,
     unlikePost,
     type Post,
 } from "../apis/API.ts"
 
-export default function TimeLinePage() {
+export default function PublicFeedPage() {
     const navigate = useNavigate()
     const [posts, setPosts] = useState<Post[]>([])
     const [loading, setLoading] = useState(true)
@@ -17,14 +16,12 @@ export default function TimeLinePage() {
         null,
     )
     const [likeToggleError, setLikeToggleError] = useState<string | null>(null)
-    const [loggingOut, setLoggingOut] = useState(false)
-    const [logoutError, setLogoutError] = useState<string | null>(null)
 
     useEffect(() => {
         let cancelled = false
         setLoading(true)
         setError(null)
-        getMyPosts()
+        getPublicPosts()
             .then((data) => {
                 if (!cancelled) setPosts(data)
             })
@@ -78,49 +75,13 @@ export default function TimeLinePage() {
         }
     }
 
-    async function handleLogout() {
-        setLogoutError(null)
-        setLoggingOut(true)
-        try {
-            await logout()
-            navigate("/", { replace: true })
-        } catch (err: unknown) {
-            const message =
-                err instanceof Error ? err.message : "Could not log out"
-            setLogoutError(message)
-        } finally {
-            setLoggingOut(false)
-        }
-    }
-
     return (
         <div>
-            <h1>This is the timeline.</h1>
+            <h1>Others&apos; posts</h1>
             <p>
-                <button type="button" onClick={() => navigate("/post")}>
-                    New post
+                <button type="button" onClick={() => navigate("/timeline")}>
+                    Back to my timeline
                 </button>
-                {!loading && !error && (
-                    <>
-                        {" "}
-                        <button
-                            type="button"
-                            onClick={() => navigate("/explore")}
-                        >
-                            See others&apos; posts
-                        </button>
-                        {" "}
-                        <button
-                            type="button"
-                            disabled={loggingOut}
-                            onClick={() => {
-                                void handleLogout()
-                            }}
-                        >
-                            {loggingOut ? "Logging out…" : "Log out"}
-                        </button>
-                    </>
-                )}
             </p>
             {loading && <p>Loading…</p>}
             {error && (
@@ -141,17 +102,9 @@ export default function TimeLinePage() {
             )}
             {!loading && !error &&
                 (posts.length === 0 ? (
-                    <>
-                        {logoutError && (
-                            <p role="alert">{logoutError}</p>
-                        )}
-                        <p>No posts yet.</p>
-                    </>
+                    <p>No posts from others yet.</p>
                 ) : (
                     <>
-                        {logoutError && (
-                            <p role="alert">{logoutError}</p>
-                        )}
                         {likeToggleError && (
                             <p role="alert">{likeToggleError}</p>
                         )}

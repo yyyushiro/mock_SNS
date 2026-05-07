@@ -5,6 +5,24 @@ export type Post = {
     like_count: number
 }
 
+function postsFromJson(data: unknown): Post[] {
+    if (!Array.isArray(data)) return []
+    return data.map((item) => {
+        const row = item as {
+            id?: unknown
+            body?: unknown
+            liked_by_me?: unknown
+            like_count?: unknown
+        }
+        return {
+            id: String(row.id ?? ""),
+            body: String(row.body ?? ""),
+            liked_by_me: Boolean(row.liked_by_me),
+            like_count: Number(row.like_count),
+        }
+    })
+}
+
 export async function getMyPosts(): Promise<Post[]> {
     const response = await fetch("/api/user/me/posts", {
         method: "GET",
@@ -18,16 +36,23 @@ export async function getMyPosts(): Promise<Post[]> {
         throw new TypeError("Oops, we haven't got JSON!")
     }
     const data: unknown = await response.json()
-    if (!Array.isArray(data)) return []
-    return data.map((item) => {
-        const row = item as { id?: unknown; body?: unknown; liked_by_me?: unknown; like_count?: unknown}
-        return {
-            id: String(row.id ?? ""),
-            body: String(row.body ?? ""),
-            liked_by_me: Boolean(row.liked_by_me),
-            like_count: Number(row.like_count)
-        }
+    return postsFromJson(data)
+}
+
+export async function getPublicPosts(): Promise<Post[]> {
+    const response = await fetch("/api/user/me/posts/public", {
+        method: "GET",
+        credentials: "include",
     })
+    if (!response.ok) {
+        throw new Error(`Response status: ${response.status}`)
+    }
+    const contentType = response.headers.get("content-type")
+    if (!contentType || !contentType.includes("application/json")) {
+        throw new TypeError("Oops, we haven't got JSON!")
+    }
+    const data: unknown = await response.json()
+    return postsFromJson(data)
 }
 
 export async function makePost(body: string): Promise<Post> {

@@ -198,3 +198,32 @@ func (a *App) UndoLikePostHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("write response: %v", err)
 	}
 }
+
+func (a *App) GetPublicPostsHandler(w http.ResponseWriter, r *http.Request) {
+	result, ok := AuthFromRequest(r)
+	if !ok {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	userId := result.Sub
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	posts, err := GetPublicPosts(userId, a.Pool, ctx)
+	if err != nil {
+		log.Printf("Getting current user's public posts: %s", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	body, err := json.Marshal(posts)
+	if err != nil {
+		log.Printf("encode json: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(body); err != nil {
+		log.Printf("write response: %v", err)
+	}
+}

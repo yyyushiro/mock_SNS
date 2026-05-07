@@ -45,7 +45,7 @@ func main() {
 	mux.HandleFunc("POST /api/posts/{id}/likes", app.WithAuth(app.LikePostHandler))
 	mux.HandleFunc("DELETE /api/posts/{id}/likes", app.WithAuth(app.UndoLikePostHandler))
 	mux.HandleFunc("POST /api/auth/logout", app.WithAuth(app.LogOutHandler))
-
+	mux.HandleFunc("GET /api/user/me/posts/public", app.WithAuth(app.GetPublicPostsHandler))
 	// Make sure the directory is valid.
 	if dir := strings.TrimSpace(os.Getenv("WEB_DIST_DIR")); dir != "" {
 		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {

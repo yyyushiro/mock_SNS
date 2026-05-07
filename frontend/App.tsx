@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom"
 import TitlePage from './pages/TitlePage.tsx'
 import TimeLinePage from "./pages/TimelinePage.tsx"
 import MakePostPage from "./pages/MakePostPage.tsx"
+import PublicFeedPage from "./pages/PublicFeedPage.tsx"
 
 export default function App() {
   return (
@@ -9,6 +10,7 @@ export default function App() {
       <Routes>
         <Route path='/' element={<TitlePage />} />
         <Route path="/timeline" element={<TimeLinePage />} />
+        <Route path="/explore" element={<PublicFeedPage />} />
         <Route path="/post" element={<MakePostPage />} />
       </Routes>
     </BrowserRouter>
