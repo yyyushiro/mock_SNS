@@ -87,3 +87,13 @@ export async function unlikePost(postId: string): Promise<void> {
     assertJsonResponse(response)
     await response.json()
 }
+
+export async function logout(): Promise<void> {
+    const response = await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "include",
+    })
+    if (!response.ok) {
+        throw new Error(`Response status: ${response.status}`)
+    }
+}

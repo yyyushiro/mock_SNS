@@ -78,7 +78,7 @@ type AuthResult struct {
 
 // RequireAuth is used in every API call and verifies the user's access token.
 func RequireAuth(r *http.Request, rdb *redis.Client) (*AuthResult, error) {
-	accessToken, err := getAndVerifyCookie(r, "access_token")
+	accessToken, err := GetAndVerifyCookie(r, "access_token")
 	if err != nil {
 		return nil, fmt.Errorf("Verifying access token Cookie: %w", err)
 	}
@@ -99,7 +99,7 @@ func RequireAuth(r *http.Request, rdb *redis.Client) (*AuthResult, error) {
 	}
 
 	// if exp is invalid, then check refreshtoken.
-	refreshToken, err := getAndVerifyCookie(r, "refresh_token")
+	refreshToken, err := GetAndVerifyCookie(r, "refresh_token")
 	if err != nil {
 		return nil, fmt.Errorf("Verifying refresh token Cookie: %w", err)
 	}
@@ -124,6 +124,6 @@ func RequireAuth(r *http.Request, rdb *redis.Client) (*AuthResult, error) {
 	// return the new access token cookie.
 	return &AuthResult{
 		Sub:                  subUuid,
-		newAccessTokenCookie: makeSignedCookie("access_token", newSignedAccessToken, 900),
+		newAccessTokenCookie: MakeSignedCookie("access_token", newSignedAccessToken, 900),
 	}, nil
 }

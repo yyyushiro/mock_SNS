@@ -15,23 +15,23 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// authenticationURIHandler redirects users to google authorization page with making Cookie.
-func (a *App) authenticationURIHandler(w http.ResponseWriter, r *http.Request) {
+// AuthenticationURIHandler redirects users to google authorization page with making Cookie.
+func (a *App) AuthenticationURIHandler(w http.ResponseWriter, r *http.Request) {
 	// Add temporary parameters and construct an authentication request to Google.
 	state := rand.Text()
 	nonce := rand.Text()
 
 	// Set state and nonce cookies to check validity of the access token and OpenID later.
-	http.SetCookie(w, makeSignedCookie("state", state, 300))
-	http.SetCookie(w, makeSignedCookie("nonce", nonce, 300))
+	http.SetCookie(w, MakeSignedCookie("state", state, 300))
+	http.SetCookie(w, MakeSignedCookie("nonce", nonce, 300))
 
 	oauthURL := a.OAuth2Conf.AuthCodeURL(state, oauth2.SetAuthURLParam("nonce", nonce), oauth2.SetAuthURLParam("redirect_uri", os.Getenv("REDIRECT_URI")))
 	http.Redirect(w, r, oauthURL, http.StatusFound)
 }
 
-// getAccessTokenHandler takes the redirect URI, then gets the access token and openID.
-func (a *App) getAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
-	stateValue, err := getAndVerifyCookie(r, "state")
+// GetAccessTokenHandler takes the redirect URI, then gets the access token and openID.
+func (a *App) GetAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
+	stateValue, err := GetAndVerifyCookie(r, "state")
 	if err != nil {
 		if errors.Is(err, http.ErrNoCookie) {
 			log.Printf("retrieve cookie: %v", err)
@@ -49,7 +49,7 @@ func (a *App) getAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Makes sure this state is not reused by attackers.
-	stateDeleteCookie := makeDeleteCookie("state")
+	stateDeleteCookie := MakeDeleteCookie("state")
 	http.SetCookie(w, stateDeleteCookie)
 
 	tok, err := a.OAuth2Conf.Exchange(context.TODO(), r.URL.Query().Get("code"))
@@ -82,7 +82,7 @@ func (a *App) getAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nonceValue, err := getAndVerifyCookie(r, "nonce")
+	nonceValue, err := GetAndVerifyCookie(r, "nonce")
 	if err != nil {
 		if errors.Is(err, http.ErrNoCookie) {
 			log.Printf("retrieve cookie: %v", err)
@@ -101,7 +101,7 @@ func (a *App) getAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Make sure the attackers send the app OpneID token with the same nonce and it passes.
-	nonceDeleteCookie := makeDeleteCookie("nonce")
+	nonceDeleteCookie := MakeDeleteCookie("nonce")
 	http.SetCookie(w, nonceDeleteCookie)
 
 	sub := claims.Sub
@@ -126,7 +126,7 @@ func (a *App) getAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// This cookie is needed for authorization of user in each request.
-	accessTokenCookie := makeSignedCookie("access_token", signedAccessToken, 900)
+	accessTokenCookie := MakeSignedCookie("access_token", signedAccessToken, 900)
 	http.SetCookie(w, accessTokenCookie)
 
 	// Store refresh token into Redis and Cookie for getting new access token when expired.
@@ -152,7 +152,7 @@ func (a *App) getAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	refreshTokenCookie := makeSignedCookie("refresh_token", refreshToken, 604800)
+	refreshTokenCookie := MakeSignedCookie("refresh_token", refreshToken, 604800)
 	http.SetCookie(w, refreshTokenCookie)
 
 	log.Printf("my access token: %s \n my refresh token: %s", signedAccessToken, refreshToken)
@@ -163,4 +163,37 @@ func (a *App) getAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 		base = "http://localhost:5173"
 	}
 	http.Redirect(w, r, base+"/timeline", http.StatusFound)
+}
+
+func (a *App) LogOutHandler(w http.ResponseWriter, r *http.Request) {
+	_, err := RequireAuth(r, a.Rdb)
+	if err != nil {
+		log.Printf("Authorization: %s", err)
+		http.Error(w, "invalid session", http.StatusUnauthorized)
+		return
+	}
+	// delete access token and refresh token.
+	accessTokenDeleteCookie := MakeDeleteCookie("access_token")
+	http.SetCookie(w, accessTokenDeleteCookie)
+
+	refreshToken, err := GetAndVerifyCookie(r, "refresh_token")
+	if err != nil {
+		log.Printf("Getting refresh token: %s", err)
+		http.Error(w, "invalid session", http.StatusUnauthorized)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = a.Rdb.Del(ctx, refreshToken).Err()
+	if err != nil {
+		log.Printf("Deleting refresh token from Redis: %s", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	refreshTokenDeleteCookie := MakeDeleteCookie("refresh_token")
+	http.SetCookie(w, refreshTokenDeleteCookie)
+
+	w.WriteHeader(http.StatusNoContent)
 }

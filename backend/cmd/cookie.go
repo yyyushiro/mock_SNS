@@ -27,8 +27,8 @@ func SignCookie(c *http.Cookie) *http.Cookie {
 	return c
 }
 
-// makeSignedCookie makes a HMAC-signed cookie with the given name, value, and maxAge.
-func makeSignedCookie(name, value string, maxAge int) *http.Cookie {
+// MakeSignedCookie makes a HMAC-signed cookie with the given name, value, and maxAge.
+func MakeSignedCookie(name, value string, maxAge int) *http.Cookie {
 	c := http.Cookie{
 		Name:     name,
 		Value:    value,
@@ -41,8 +41,8 @@ func makeSignedCookie(name, value string, maxAge int) *http.Cookie {
 	return SignCookie(&c)
 }
 
-// makeDeleteCookie deletes cookie with the given name.
-func makeDeleteCookie(name string) *http.Cookie {
+// MakeDeleteCookie deletes cookie with the given name.
+func MakeDeleteCookie(name string) *http.Cookie {
 	c := &http.Cookie{
 		Name:     name,
 		Value:    "",
@@ -55,8 +55,8 @@ func makeDeleteCookie(name string) *http.Cookie {
 	return c
 }
 
-// getAndVerifyCookie verifies the given name's Cookie and return its decoded value.
-func getAndVerifyCookie(r *http.Request, name string) (string, error) {
+// GetAndVerifyCookie verifies the given name's Cookie and return its decoded value.
+func GetAndVerifyCookie(r *http.Request, name string) (string, error) {
 	signedCookie, err := r.Cookie(name)
 	if err != nil {
 		return "", err
