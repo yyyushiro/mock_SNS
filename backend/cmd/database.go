@@ -11,12 +11,12 @@ import (
 )
 
 type Post struct {
-	PostId    uuid.UUID `json:"id"`
-	UserId    uuid.UUID `json:"user_id"`
-	Body      string    `json:"body"`
-	CreatedAt time.Time `json:"created_at"`
-	LikedByMe bool      `json:"liked_by_me"`
-	LikeCount int       `json:"like_count"`
+	PostId    uuid.UUID
+	UserId    uuid.UUID
+	Body      string
+	CreatedAt time.Time
+	LikedByMe bool
+	LikeCount int
 }
 
 type Like struct {
@@ -53,7 +53,7 @@ func DeletePost(userId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Contex
 
 func GetMyPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) ([]Post, error) {
 	rows, err := pool.Query(ctx, `
-		SELECT id, body,
+		SELECT id, body, created_at,
 			EXISTS (
 				SELECT 1 FROM likes
 				WHERE likes.user_id = $1 AND likes.post_id = posts.id
@@ -66,7 +66,7 @@ func GetMyPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) ([]Po
 	var posts []Post
 	for rows.Next() {
 		var p Post
-		if err := rows.Scan(&p.PostId, &p.Body, &p.LikedByMe); err != nil {
+		if err := rows.Scan(&p.PostId, &p.Body, &p.CreatedAt, &p.LikedByMe); err != nil {
 			return nil, fmt.Errorf("Scanning posts: %w", err)
 		}
 
@@ -85,7 +85,7 @@ func GetMyPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) ([]Po
 }
 
 func GetPublicPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) ([]Post, error) {
-	rows, err := pool.Query(ctx, `SELECT id, body,
+	rows, err := pool.Query(ctx, `SELECT id, body, created_at,
 	EXISTS (
 		SELECT 1 FROM likes
 		WHERE likes.user_id = $1 AND likes.post_id = posts.id
@@ -97,7 +97,7 @@ func GetPublicPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (
 	var posts []Post
 	for rows.Next() {
 		var p Post
-		if err := rows.Scan(&p.PostId, &p.Body, &p.LikedByMe); err != nil {
+		if err := rows.Scan(&p.PostId, &p.Body, &p.CreatedAt, &p.LikedByMe); err != nil {
 			return nil, fmt.Errorf("Scanning posts: %w", err)
 		}
 

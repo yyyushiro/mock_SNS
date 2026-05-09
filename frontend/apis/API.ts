@@ -1,26 +1,32 @@
 export type Post = {
     id: string
     body: string
+    created_at: string
     liked_by_me: boolean
     like_count: number
 }
 
+type PostWire = {
+    id?: unknown
+    body?: unknown
+    created_at?: unknown
+    liked_by_me?: unknown
+    like_count?: unknown
+}
+
+function postRowFromJson(row: PostWire): Post {
+    return {
+        id: String(row.id ?? ""),
+        body: String(row.body ?? ""),
+        created_at: String(row.created_at ?? ""),
+        liked_by_me: Boolean(row.liked_by_me),
+        like_count: Number(row.like_count ?? 0),
+    }
+}
+
 function postsFromJson(data: unknown): Post[] {
     if (!Array.isArray(data)) return []
-    return data.map((item) => {
-        const row = item as {
-            id?: unknown
-            body?: unknown
-            liked_by_me?: unknown
-            like_count?: unknown
-        }
-        return {
-            id: String(row.id ?? ""),
-            body: String(row.body ?? ""),
-            liked_by_me: Boolean(row.liked_by_me),
-            like_count: Number(row.like_count),
-        }
-    })
+    return data.map((item) => postRowFromJson(item as PostWire))
 }
 
 export async function getMyPosts(): Promise<Post[]> {
@@ -70,18 +76,7 @@ export async function makePost(body: string): Promise<Post> {
         throw new TypeError("Oops, we haven't got JSON!")
     }
     const raw: unknown = await response.json()
-    const row = raw as {
-        id?: unknown
-        body?: unknown
-        liked_by_me?: unknown
-        like_count?: unknown
-    }
-    return {
-        id: String(row.id ?? ""),
-        body: String(row.body ?? ""),
-        liked_by_me: Boolean(row.liked_by_me),
-        like_count: Number(row.like_count ?? 0),
-    }
+    return postRowFromJson(raw as PostWire)
 }
 
 function assertJsonResponse(response: Response): void {

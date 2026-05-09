@@ -161,7 +161,23 @@ export default function TimeLinePage() {
                                 const liked = post.liked_by_me
                                 return (
                                     <li key={post.id}>
-                                        <span>{post.body}</span>{" "}
+                                        <span>{post.body}</span>
+                                        {post.created_at ? (
+                                            <>
+                                                {" "}
+                                                <time
+                                                    dateTime={post.created_at}
+                                                    style={{
+                                                        color: "#666",
+                                                        fontSize: "0.9em",
+                                                    }}
+                                                >
+                                                    {new Date(
+                                                        post.created_at,
+                                                    ).toLocaleString()}
+                                                </time>
+                                            </>
+                                        ) : null}{" "}
                                         <button
                                             type="button"
                                             disabled={busy}
