@@ -3,13 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
 // These structs are for HTTP response and different from the ones for database.
@@ -129,30 +127,14 @@ func (a *App) DeletePostHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	post, err := DeletePost(result.Sub, postID, a.Pool, ctx)
+	err = DeletePost(result.Sub, postID, a.Pool, ctx)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		log.Printf("deleting post: %s", err)
+		log.Print(err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	resp := postToResponse(*post)
-	body, err := json.Marshal(resp)
-	if err != nil {
-		log.Printf("encode json: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write(body); err != nil {
-		log.Printf("write response: %v", err)
-	}
 }
 
 func (a *App) LikePostHandler(w http.ResponseWriter, r *http.Request) {

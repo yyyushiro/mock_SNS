@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import {
+    deletePost,
     getMyPosts,
     getPublicPosts,
     likePost,
@@ -32,6 +33,12 @@ export default function TimeLinePage() {
         null,
     )
     const [likeToggleError, setLikeToggleError] = useState<string | null>(null)
+    const [pendingDeletePostId, setPendingDeletePostId] = useState<
+        string | null
+    >(null)
+    const [deletePostError, setDeletePostError] = useState<string | null>(
+        null,
+    )
     const [loggingOut, setLoggingOut] = useState(false)
     const [logoutError, setLogoutError] = useState<string | null>(null)
 
@@ -64,6 +71,10 @@ export default function TimeLinePage() {
         }
     }, [feedView])
 
+    useEffect(() => {
+        setDeletePostError(null)
+    }, [feedView])
+
     async function toggleLike(post: Post) {
         if (pendingLikePostId !== null) return
         setLikeToggleError(null)
@@ -92,6 +103,22 @@ export default function TimeLinePage() {
             setLikeToggleError(message)
         } finally {
             setPendingLikePostId(null)
+        }
+    }
+
+    async function handleDeletePost(post: Post) {
+        if (pendingDeletePostId !== null) return
+        setDeletePostError(null)
+        setPendingDeletePostId(post.id)
+        try {
+            await deletePost(post.id)
+            setPosts((prev) => prev.filter((p) => p.id !== post.id))
+        } catch (err: unknown) {
+            const message =
+                err instanceof Error ? err.message : "Could not delete post"
+            setDeletePostError(message)
+        } finally {
+            setPendingDeletePostId(null)
         }
     }
 
@@ -201,9 +228,16 @@ export default function TimeLinePage() {
                                     {likeToggleError}
                                 </p>
                             )}
+                            {deletePostError && feedView === "mine" && (
+                                <p className="app-alert" role="alert">
+                                    {deletePostError}
+                                </p>
+                            )}
                             <ul className="post-list">
                                 {posts.map((post) => {
                                     const busy = pendingLikePostId === post.id
+                                    const deleting =
+                                        pendingDeletePostId === post.id
                                     const liked = post.liked_by_me
                                     const formattedDate =
                                         post.created_at
@@ -238,10 +272,16 @@ export default function TimeLinePage() {
                                                     —
                                                 </div>
                                             )}
-                                            <div className="post-card__footer">
+                                            <div
+                                                className={
+                                                    feedView === "mine"
+                                                        ? "post-card__footer post-card__footer--mine"
+                                                        : "post-card__footer"
+                                                }
+                                            >
                                                 <button
                                                     type="button"
-                                                    disabled={busy}
+                                                    disabled={busy || deleting}
                                                     aria-pressed={liked}
                                                     className={`btn-like${
                                                         liked
@@ -262,6 +302,28 @@ export default function TimeLinePage() {
                                                         {post.like_count}
                                                     </span>
                                                 </button>
+                                                {feedView === "mine" && (
+                                                    <button
+                                                        type="button"
+                                                        className="btn-delete"
+                                                        disabled={
+                                                            deleting ||
+                                                            busy ||
+                                                            pendingDeletePostId !==
+                                                                null
+                                                        }
+                                                        aria-label={`Delete post ${post.id}`}
+                                                        onClick={() =>
+                                                            void handleDeletePost(
+                                                                post,
+                                                            )
+                                                        }
+                                                    >
+                                                        {deleting
+                                                            ? "Deleting…"
+                                                            : "Delete"}
+                                                    </button>
+                                                )}
                                             </div>
                                         </li>
                                     )

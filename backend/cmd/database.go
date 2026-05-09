@@ -38,17 +38,25 @@ func AddPost(sub uuid.UUID, body string, pool *pgxpool.Pool, ctx context.Context
 	return &post, nil
 }
 
-func DeletePost(userId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (*Post, error) {
-	var post Post
-	err := pool.QueryRow(ctx,
-		`DELETE FROM posts WHERE id = $1 AND user_id = $2
-		RETURNING id, user_id, body, created_at`,
-		postId, userId,
-	).Scan(&post.PostId, &post.UserId, &post.Body, &post.CreatedAt)
+func DeletePost(userId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) error {
+	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("Deleting post: %w", err)
+		return fmt.Errorf("starting transaction: %w", err)
 	}
-	return &post, nil
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, "DELETE FROM likes WHERE post_id = $1", postId); err != nil {
+		return fmt.Errorf("Deleting rows in likes: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, "DELETE FROM posts WHERE id = $1 AND user_id = $2", postId, userId); err != nil {
+		return fmt.Errorf("Deleting a row in posts: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("Committing transaction: %w", err)
+	}
+	return nil
 }
 
 func GetMyPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) ([]Post, error) {

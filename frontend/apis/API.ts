@@ -116,6 +116,19 @@ export async function unlikePost(postId: string): Promise<void> {
     await response.json()
 }
 
+export async function deletePost(postId: string): Promise<void> {
+    const response = await fetch(
+        `/api/posts/${encodeURIComponent(postId)}`,
+        {
+            method: "DELETE",
+            credentials: "include",
+        },
+    )
+    if (!response.ok) {
+        throw new Error(`Response status: ${response.status}`)
+    }
+}
+
 export async function logout(): Promise<void> {
     const response = await fetch("/api/auth/logout", {
         method: "POST",
