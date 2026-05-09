@@ -30,26 +30,31 @@ export default function MakePostPage() {
     }
 
     return (
-        <div>
-            <h1>New post</h1>
-            <form onSubmit={handleSubmit}>
+        <div className="make-post-page">
+            <h1 className="make-post-heading">Add Post</h1>
+            <form className="make-post-form" onSubmit={handleSubmit}>
                 <textarea
+                    className="make-post-textarea"
                     value={text}
                     onChange={(e) => setText(e.target.value)}
                     rows={8}
-                    cols={40}
                     disabled={loading}
                 />
-                <div>
+                <div className="make-post-actions">
                     <button
                         type="submit"
+                        className="btn btn--primary"
                         disabled={loading || text.trim() === ""}
                     >
-                        {loading ? "Submitting…" : "Submit"}
+                        {loading ? "Submitting…" : "Post"}
                     </button>
                 </div>
             </form>
-            {error && <p role="alert">{error}</p>}
+            {error && (
+                <p className="app-alert make-post-alert" role="alert">
+                    {error}
+                </p>
+            )}
         </div>
     )
 }

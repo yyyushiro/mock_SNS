@@ -4,9 +4,15 @@ export default function TitlePage() {
     }
 
     return (
-        <div>
-            <h1>みんなの日記帳</h1>
-            <button onClick={handleGoogleLogin}>Continue with Google</button>
+        <div className="title-page">
+            <h1 className="title-page__heading">みんなの日記帳</h1>
+            <button
+                type="button"
+                className="btn btn--primary"
+                onClick={handleGoogleLogin}
+            >
+                Googleでログイン
+            </button>
         </div>
     )
 }
