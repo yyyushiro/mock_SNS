@@ -243,3 +243,88 @@ func (a *App) GetPublicPostsHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("write response: %v", err)
 	}
 }
+
+func (a *App) GetFollowingPostsHandler(w http.ResponseWriter, r *http.Request) {
+	result, ok := AuthFromRequest(r)
+	if !ok {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	userId := result.Sub
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	posts, err := GetFollowingPosts(userId, a.Pool, ctx)
+	if err != nil {
+		log.Printf("Getting current user's public posts: %s", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	out := make([]PostResponse, len(posts))
+	for i := range posts {
+		out[i] = postToResponse(posts[i])
+	}
+	body, err := json.Marshal(out)
+	if err != nil {
+		log.Printf("encode json: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(body); err != nil {
+		log.Printf("write response: %v", err)
+	}
+}
+
+func (a *App) FollowUserHandler(w http.ResponseWriter, r *http.Request) {
+	result, ok := AuthFromRequest(r)
+	if !ok {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	strPostId := r.PathValue("id")
+	postID, err := uuid.Parse(strPostId)
+	if err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	err = AddFollow(result.Sub, postID, a.Pool, ctx)
+	if err != nil {
+		log.Print(err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (a *App) UnfollowUserHandler(w http.ResponseWriter, r *http.Request) {
+	result, ok := AuthFromRequest(r)
+	if !ok {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	strPostId := r.PathValue("id")
+	postID, err := uuid.Parse(strPostId)
+	if err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	err = DeleteFollow(result.Sub, postID, a.Pool, ctx)
+	if err != nil {
+		log.Print(err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}

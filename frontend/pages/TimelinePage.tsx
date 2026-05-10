@@ -2,25 +2,35 @@ import { useEffect, useState } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import {
     deletePost,
+    followPost,
+    getFollowingPosts,
     getMyPosts,
     getPublicPosts,
     likePost,
     logout,
+    unfollowPost,
     unlikePost,
     type Post,
 } from "../apis/API.ts"
 
-type FeedView = "mine" | "public"
+type FeedView = "mine" | "public" | "following"
+
+function feedViewFromSearch(view: string | null): FeedView {
+    if (view === "feeds") return "public"
+    if (view === "following") return "following"
+    return "mine"
+}
 
 export default function TimeLinePage() {
     const navigate = useNavigate()
     const [searchParams, setSearchParams] = useSearchParams()
-    const feedView: FeedView =
-        searchParams.get("view") === "feeds" ? "public" : "mine"
+    const feedView: FeedView = feedViewFromSearch(searchParams.get("view"))
 
     function setFeedView(next: FeedView) {
         if (next === "public") {
             setSearchParams({ view: "feeds" })
+        } else if (next === "following") {
+            setSearchParams({ view: "following" })
         } else {
             setSearchParams({})
         }
@@ -39,6 +49,12 @@ export default function TimeLinePage() {
     const [deletePostError, setDeletePostError] = useState<string | null>(
         null,
     )
+    const [pendingFollowPostId, setPendingFollowPostId] = useState<
+        string | null
+    >(null)
+    const [followActionError, setFollowActionError] = useState<string | null>(
+        null,
+    )
     const [loggingOut, setLoggingOut] = useState(false)
     const [logoutError, setLogoutError] = useState<string | null>(null)
 
@@ -47,7 +63,11 @@ export default function TimeLinePage() {
         setLoading(true)
         setError(null)
         const fetchPosts =
-            feedView === "mine" ? getMyPosts() : getPublicPosts()
+            feedView === "mine"
+                ? getMyPosts()
+                : feedView === "public"
+                  ? getPublicPosts()
+                  : getFollowingPosts()
         fetchPosts
             .then((data) => {
                 if (!cancelled) setPosts(data)
@@ -73,10 +93,11 @@ export default function TimeLinePage() {
 
     useEffect(() => {
         setDeletePostError(null)
+        setFollowActionError(null)
     }, [feedView])
 
     async function toggleLike(post: Post) {
-        if (pendingLikePostId !== null) return
+        if (pendingLikePostId !== null || pendingFollowPostId !== null) return
         setLikeToggleError(null)
         setPendingLikePostId(post.id)
         try {
@@ -103,6 +124,40 @@ export default function TimeLinePage() {
             setLikeToggleError(message)
         } finally {
             setPendingLikePostId(null)
+        }
+    }
+
+    async function handleFollowPost(post: Post) {
+        if (pendingFollowPostId !== null || pendingLikePostId !== null) return
+        setFollowActionError(null)
+        setPendingFollowPostId(post.id)
+        try {
+            await followPost(post.id)
+            const data = await getPublicPosts()
+            setPosts(data)
+        } catch (err: unknown) {
+            const message =
+                err instanceof Error ? err.message : "Could not follow user"
+            setFollowActionError(message)
+        } finally {
+            setPendingFollowPostId(null)
+        }
+    }
+
+    async function handleUnfollowPost(post: Post) {
+        if (pendingFollowPostId !== null || pendingLikePostId !== null) return
+        setFollowActionError(null)
+        setPendingFollowPostId(post.id)
+        try {
+            await unfollowPost(post.id)
+            const data = await getFollowingPosts()
+            setPosts(data)
+        } catch (err: unknown) {
+            const message =
+                err instanceof Error ? err.message : "Could not unfollow user"
+            setFollowActionError(message)
+        } finally {
+            setPendingFollowPostId(null)
         }
     }
 
@@ -137,9 +192,25 @@ export default function TimeLinePage() {
         }
     }
 
-    const centerTitle = feedView === "mine" ? "My Posts" : "Feeds"
-    const switchLabel = feedView === "mine" ? "Feeds" : "My Posts"
-    const switchTo: FeedView = feedView === "mine" ? "public" : "mine"
+    const centerTitle =
+        feedView === "mine"
+            ? "My Posts"
+            : feedView === "public"
+              ? "Feeds"
+              : "Following"
+
+    const feedTabs: { id: FeedView; label: string }[] = [
+        { id: "mine", label: "My Posts" },
+        { id: "public", label: "Feeds" },
+        { id: "following", label: "Following" },
+    ]
+
+    const emptyMessage =
+        feedView === "mine"
+            ? "No posts yet."
+            : feedView === "public"
+              ? "No posts from others yet."
+              : "No posts from people you follow yet."
 
     return (
         <div className="timeline-page">
@@ -153,16 +224,31 @@ export default function TimeLinePage() {
                         Add Posts
                     </button>
                 </div>
-                <div className="timeline-header__center">
+                <div className="timeline-header__center timeline-header__center--stacked">
                     <h1 className="timeline-title">{centerTitle}</h1>
                     {!loading && !error && (
-                        <button
-                            type="button"
-                            className="btn btn--primary"
-                            onClick={() => setFeedView(switchTo)}
+                        <nav
+                            className="timeline-feed-nav"
+                            aria-label="Choose feed"
                         >
-                            {switchLabel}
-                        </button>
+                            {feedTabs.map((tab) => (
+                                <button
+                                    key={tab.id}
+                                    type="button"
+                                    className={
+                                        feedView === tab.id
+                                            ? "btn-feed-tab btn-feed-tab--active"
+                                            : "btn-feed-tab"
+                                    }
+                                    aria-current={
+                                        feedView === tab.id ? "page" : undefined
+                                    }
+                                    onClick={() => setFeedView(tab.id)}
+                                >
+                                    {tab.label}
+                                </button>
+                            ))}
+                        </nav>
                     )}
                 </div>
                 <div className="timeline-header__end">
@@ -210,11 +296,7 @@ export default function TimeLinePage() {
                                     {logoutError}
                                 </p>
                             )}
-                            <p className="timeline-empty">
-                                {feedView === "mine"
-                                    ? "No posts yet."
-                                    : "No posts from others yet."}
-                            </p>
+                            <p className="timeline-empty">{emptyMessage}</p>
                         </>
                     ) : (
                         <>
@@ -228,6 +310,13 @@ export default function TimeLinePage() {
                                     {likeToggleError}
                                 </p>
                             )}
+                            {followActionError &&
+                                (feedView === "public" ||
+                                    feedView === "following") && (
+                                    <p className="app-alert" role="alert">
+                                        {followActionError}
+                                    </p>
+                                )}
                             {deletePostError && feedView === "mine" && (
                                 <p className="app-alert" role="alert">
                                     {deletePostError}
@@ -238,6 +327,14 @@ export default function TimeLinePage() {
                                     const busy = pendingLikePostId === post.id
                                     const deleting =
                                         pendingDeletePostId === post.id
+                                    const followBusy =
+                                        pendingFollowPostId === post.id
+                                    const rowBusy =
+                                        busy ||
+                                        deleting ||
+                                        followBusy ||
+                                        pendingFollowPostId !== null ||
+                                        pendingLikePostId !== null
                                     const liked = post.liked_by_me
                                     const formattedDate =
                                         post.created_at
@@ -249,6 +346,9 @@ export default function TimeLinePage() {
                                               })
                                             : ""
                                     const bodyTrimmed = post.body.trim()
+                                    const footerExtra =
+                                        feedView === "public" ||
+                                        feedView === "following"
                                     return (
                                         <li key={post.id} className="post-card">
                                             {formattedDate ? (
@@ -276,12 +376,14 @@ export default function TimeLinePage() {
                                                 className={
                                                     feedView === "mine"
                                                         ? "post-card__footer post-card__footer--mine"
-                                                        : "post-card__footer"
+                                                        : footerExtra
+                                                          ? "post-card__footer post-card__footer--discover"
+                                                          : "post-card__footer"
                                                 }
                                             >
                                                 <button
                                                     type="button"
-                                                    disabled={busy || deleting}
+                                                    disabled={rowBusy}
                                                     aria-pressed={liked}
                                                     className={`btn-like${
                                                         liked
@@ -302,6 +404,40 @@ export default function TimeLinePage() {
                                                         {post.like_count}
                                                     </span>
                                                 </button>
+                                                {feedView === "public" && (
+                                                    <button
+                                                        type="button"
+                                                        className="btn-follow"
+                                                        disabled={rowBusy}
+                                                        aria-label={`Follow author of post`}
+                                                        onClick={() =>
+                                                            void handleFollowPost(
+                                                                post,
+                                                            )
+                                                        }
+                                                    >
+                                                        {followBusy
+                                                            ? "Following…"
+                                                            : "Follow"}
+                                                    </button>
+                                                )}
+                                                {feedView === "following" && (
+                                                    <button
+                                                        type="button"
+                                                        className="btn-unfollow"
+                                                        disabled={rowBusy}
+                                                        aria-label={`Unfollow author of post`}
+                                                        onClick={() =>
+                                                            void handleUnfollowPost(
+                                                                post,
+                                                            )
+                                                        }
+                                                    >
+                                                        {followBusy
+                                                            ? "Unfollowing…"
+                                                            : "Unfollow"}
+                                                    </button>
+                                                )}
                                                 {feedView === "mine" && (
                                                     <button
                                                         type="button"

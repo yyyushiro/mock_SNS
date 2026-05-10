@@ -61,6 +61,48 @@ export async function getPublicPosts(): Promise<Post[]> {
     return postsFromJson(data)
 }
 
+export async function getFollowingPosts(): Promise<Post[]> {
+    const response = await fetch("/api/user/me/posts/following", {
+        method: "GET",
+        credentials: "include",
+    })
+    if (!response.ok) {
+        throw new Error(`Response status: ${response.status}`)
+    }
+    const contentType = response.headers.get("content-type")
+    if (!contentType || !contentType.includes("application/json")) {
+        throw new TypeError("Oops, we haven't got JSON!")
+    }
+    const data: unknown = await response.json()
+    return postsFromJson(data)
+}
+
+export async function followPost(postId: string): Promise<void> {
+    const response = await fetch(
+        `/api/posts/${encodeURIComponent(postId)}/follow`,
+        {
+            method: "POST",
+            credentials: "include",
+        },
+    )
+    if (!response.ok) {
+        throw new Error(`Response status: ${response.status}`)
+    }
+}
+
+export async function unfollowPost(postId: string): Promise<void> {
+    const response = await fetch(
+        `/api/posts/${encodeURIComponent(postId)}/follow`,
+        {
+            method: "DELETE",
+            credentials: "include",
+        },
+    )
+    if (!response.ok) {
+        throw new Error(`Response status: ${response.status}`)
+    }
+}
+
 export async function makePost(body: string): Promise<Post> {
     const response = await fetch("/api/posts", {
         method: "POST",

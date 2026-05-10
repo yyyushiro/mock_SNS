@@ -4,7 +4,10 @@ COMPOSE := docker compose -f $(COMPOSE_FILE)
 BACKEND_DIR := backend
 BACKEND_BIN := $(CURDIR)/bin/backend
 
-.PHONY: dev-up dev-build down logs clean ps migrate-up migrate-down backend-build backend-run rebuild-frontend
+# Dev DB published by docker-compose.dev.yml (host → container).
+MIGRATE_DB_ADDR ?= 127.0.0.1:5432
+
+.PHONY: dev-up dev-build down logs clean ps migrate-up migrate-down migrate-down-all migrate-version backend-build backend-run rebuild-frontend
 
 dev-up:
 	$(COMPOSE) up -d
@@ -37,11 +40,22 @@ ps:
 clean:
 	$(COMPOSE) down -v --remove-orphans
 
+# make migrate name=create_whatever_table
+migrate:
+	migrate create -ext sql -dir $(CURDIR)/$(BACKEND_DIR)/database/migrations -seq $(name)
+
+# Optional steps=N (see migrate -help). Up with no N applies all pending; down with no N asks to drop ALL (use steps=1 or migrate-down-all).
 migrate-up:
-	$(COMPOSE) exec backend migrate -path /app/database/migrations -database "postgres://$$POSTGRES_USER:$$POSTGRES_PASSWORD@db:5432/$$POSTGRES_DB?sslmode=disable" up
+	set -a && . "$(CURDIR)/.env" && set +a && migrate -path $(CURDIR)/$(BACKEND_DIR)/database/migrations -database "postgres://$$POSTGRES_USER:$$POSTGRES_PASSWORD@$(MIGRATE_DB_ADDR)/$$POSTGRES_DB?sslmode=disable" up $(steps)
 
 migrate-down:
-	$(COMPOSE) exec backend migrate -path /app/database/migrations -database "postgres://$$POSTGRES_USER:$$POSTGRES_PASSWORD@db:5432/$$POSTGRES_DB?sslmode=disable" down
+	set -a && . "$(CURDIR)/.env" && set +a && migrate -path $(CURDIR)/$(BACKEND_DIR)/database/migrations -database "postgres://$$POSTGRES_USER:$$POSTGRES_PASSWORD@$(MIGRATE_DB_ADDR)/$$POSTGRES_DB?sslmode=disable" down $(steps)
+
+migrate-down-all:
+	set -a && . "$(CURDIR)/.env" && set +a && migrate -path $(CURDIR)/$(BACKEND_DIR)/database/migrations -database "postgres://$$POSTGRES_USER:$$POSTGRES_PASSWORD@$(MIGRATE_DB_ADDR)/$$POSTGRES_DB?sslmode=disable" down -all
+
+migrate-version:
+	set -a && . "$(CURDIR)/.env" && set +a && migrate -path $(CURDIR)/$(BACKEND_DIR)/database/migrations -database "postgres://$$POSTGRES_USER:$$POSTGRES_PASSWORD@$(MIGRATE_DB_ADDR)/$$POSTGRES_DB?sslmode=disable" version
 
 # Run from repository root (kaima/) so process cwd stays the repo root (e.g. .env next to Makefile).
 backend-build:

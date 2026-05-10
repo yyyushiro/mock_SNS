@@ -100,6 +100,52 @@ body {
     justify-self: center;
 }
 
+.timeline-header__center--stacked {
+    flex-direction: column;
+    align-items: center;
+    gap: 0.625rem;
+}
+
+.timeline-feed-nav {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+.btn-feed-tab {
+    appearance: none;
+    font-family: inherit;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    line-height: 1.2;
+    padding: 0.4rem 0.75rem;
+    border-radius: var(--radius-btn);
+    cursor: pointer;
+    border: 1px solid rgba(0, 0, 0, 0.18);
+    background: rgba(255, 255, 255, 0.65);
+    color: var(--color-text);
+    transition:
+        background 0.15s ease,
+        border-color 0.15s ease;
+}
+
+.btn-feed-tab:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.95);
+}
+
+.btn-feed-tab--active {
+    background: var(--color-btn-bg);
+    color: var(--color-white);
+    border-color: var(--color-btn-bg);
+}
+
+.btn-feed-tab--active:hover:not(:disabled) {
+    background: var(--color-btn-hover);
+    border-color: var(--color-btn-hover);
+}
+
 .timeline-header__end {
     justify-self: end;
 }
@@ -184,6 +230,11 @@ body {
     justify-content: space-between;
 }
 
+.post-card__footer--discover {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+}
+
 .btn-like {
     appearance: none;
     font-family: inherit;
@@ -226,6 +277,52 @@ body {
 }
 
 .btn-delete:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+.btn-follow {
+    appearance: none;
+    font-family: inherit;
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1.2;
+    padding: 0.35rem 0.65rem;
+    border-radius: 6px;
+    cursor: pointer;
+    border: 1px solid #1565c0;
+    background: rgba(21, 101, 192, 0.08);
+    color: #1565c0;
+}
+
+.btn-follow:hover:not(:disabled) {
+    background: rgba(21, 101, 192, 0.14);
+}
+
+.btn-follow:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+.btn-unfollow {
+    appearance: none;
+    font-family: inherit;
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1.2;
+    padding: 0.35rem 0.65rem;
+    border-radius: 6px;
+    cursor: pointer;
+    border: 1px solid var(--color-muted);
+    background: rgba(0, 0, 0, 0.04);
+    color: var(--color-muted);
+}
+
+.btn-unfollow:hover:not(:disabled) {
+    background: rgba(0, 0, 0, 0.08);
+}
+
+.btn-unfollow:disabled {
     opacity: 0.6;
     cursor: wait;
 }

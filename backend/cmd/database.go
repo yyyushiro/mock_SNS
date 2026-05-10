@@ -97,7 +97,48 @@ func GetPublicPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (
 	EXISTS (
 		SELECT 1 FROM likes
 		WHERE likes.user_id = $1 AND likes.post_id = posts.id
-	) FROM posts WHERE posts.user_id <> $1`, userId)
+	) 
+	FROM posts 
+	WHERE posts.user_id <> $1
+	AND NOT EXISTS (
+	  SELECT 1 FROM follows f
+	  WHERE f.follower_id = $1 AND f.followee_id = posts.user_id)`, userId)
+	if err != nil {
+		return nil, fmt.Errorf("Getting post rows: %w", err)
+	}
+	defer rows.Close()
+	var posts []Post
+	for rows.Next() {
+		var p Post
+		if err := rows.Scan(&p.PostId, &p.Body, &p.CreatedAt, &p.LikedByMe); err != nil {
+			return nil, fmt.Errorf("Scanning posts: %w", err)
+		}
+
+		p.LikeCount, err = getLikeCount(p.PostId, pool, ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		posts = append(posts, p)
+	}
+	// This error block catches when the iteration finishes abnormally.
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("Scanned posts: %w", err)
+	}
+	return posts, nil
+}
+
+func GetFollowingPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) ([]Post, error) {
+	rows, err := pool.Query(ctx, `SELECT id, body, created_at,
+	EXISTS (
+		SELECT 1 FROM likes
+		WHERE likes.user_id = $1 AND likes.post_id = posts.id
+	) 
+	FROM posts 
+	WHERE posts.user_id <> $1
+	AND EXISTS (
+	  SELECT 1 FROM follows f
+	  WHERE f.follower_id = $1 AND f.followee_id = posts.user_id)`, userId)
 	if err != nil {
 		return nil, fmt.Errorf("Getting post rows: %w", err)
 	}
@@ -165,4 +206,40 @@ func getLikeCount(postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (in
 		return -1, fmt.Errorf("Counted likes: %w", err)
 	}
 	return count, nil
+}
+
+func findUserByPost(postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (uuid.UUID, error) {
+	var userId uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT user_id from posts WHERE id = $1`, postId).Scan(&userId); err != nil {
+		return userId, fmt.Errorf("Finding userId by postId: %w", err)
+	}
+	return userId, nil
+}
+
+func AddFollow(followerId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) error {
+	followeeId, err := findUserByPost(postId, pool, ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = pool.Exec(ctx, "INSERT INTO follows (follower_id, followee_id) VALUES ($1, $2)", followerId, followeeId)
+	if err != nil {
+		return fmt.Errorf("Inserting into follows: %w", err)
+	}
+
+	return nil
+}
+
+func DeleteFollow(followerId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) error {
+	followeeId, err := findUserByPost(postId, pool, ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = pool.Exec(ctx, "DELETE FROM follows WHERE follower_id = $1 AND followee_id = $2", followerId, followeeId)
+	if err != nil {
+		return fmt.Errorf("Deleting from follows: %w", err)
+	}
+
+	return nil
 }
