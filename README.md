@@ -1,43 +1,296 @@
-## ER
+# Kaima
+
+## 概要
+Google アカウントでのログイン、投稿・いいね・フォロー、複数種類のタイムライン閲覧ができる SNS 風の Web アプリを作成しました。
+
+このプロジェクトは新規性のある内容は含まれておらず、認証周りや基本的なアプリケーション作成に対する理解を深める・示すことを目的としています。
+
+とりわけGoogle Oauthを利用した安全な認証フローや、認証ミドルウェアの実装に力を入れた。
+
+---
+
+## 機能
+
+| 機能 | メソッド | パス |
+|------|----------|------|
+| Google ログイン開始 | GET | `/api/auth/google/start` |
+| Google OAuth コールバック | GET | `/api/auth/callback/google` |
+| ログアウト | POST | `/api/auth/logout` |
+| 自分の情報取得 | GET | `/api/user/me` |
+| ユーザー名更新 | PATCH | `/api/user/me` |
+| 自分の投稿一覧 | GET | `/api/user/me/posts` |
+| 自分のタイムライン（公開のみ） | GET | `/api/user/me/posts/public` |
+| 自分のタイムライン（フォロー） | GET | `/api/user/me/posts/following` |
+| 投稿作成 | POST | `/api/posts` |
+| 投稿削除 | DELETE | `/api/posts/{id}` |
+| いいね | POST | `/api/posts/{id}/likes` |
+| いいね取り消し | DELETE | `/api/posts/{id}/likes` |
+| フォロー | POST | `/api/user/{id}/follow` |
+| アンフォロー | DELETE | `/api/user/{id}/follow` |
+| 他ユーザー情報 | GET | `/api/user/{id}` |
+
+保護されているハンドラはすべて [`backend/cmd/app.go`](backend/cmd/app.go) の `WithAuth` でラップされている（Google Oauthに関する上二つについてのハンドラは除く）。
+
+---
+
+## 技術スタック
+
+### インフラ・外部サービス
+
+- **PostgreSQL** … ユーザー・投稿などの永続データ
+- **Redis** … リフレッシュトークンの保存（[`backend/cmd/auth.go`](backend/cmd/auth.go) など）
+- **Google（OAuth 2.0 / OpenID Connect）** … ユーザー認証・`id_token` の発行
+- **開発時の実行環境** … Docker Compose（[`docker-compose.dev.yml`](docker-compose.dev.yml)）で PostgreSQL `18` イメージ・Redis・バックエンド・Vite を起動
+
+### バックエンド（Go `1.25.6`、[`backend/go.mod`](backend/go.mod)）
+
+**標準ライブラリ**
+
+- `net/http` … HTTP サーバ・`ServeMux`
+
+**モジュール**
+
+| モジュール | 役割 |
+|-------------|------|
+| `github.com/jackc/pgx/v5` | PostgreSQL への接続・クエリ実行（`pgxpool`） |
+| `github.com/redis/go-redis/v9` | Redis クライアント |
+| `golang.org/x/oauth2` | Google との認可コードフロー（`oauth2.Config` 等） |
+| `github.com/coreos/go-oidc/v3` | OIDC プロバイダ・`IDTokenVerifier` による ID Token の検証 |
+| `github.com/golang-jwt/jwt/v5` | アクセス JWT の発行・パース |
+
+### フロントエンド（[`frontend/package.json`](frontend/package.json)）
+
+**ビルド・言語ツール**
+
+- **Vite** `8`、`TypeScript` `6.x`（開発サーバ・型付け）
+
+**依存ライブラリ（npm）**
+
+- **React** `19`、`react-dom` … UI
+- **react-router-dom** `7` … ルーティング
+
+---
+
+## アーキテクチャ
+
+- **開発時**：フロントの Vite は [`frontend/vite.config.ts`](frontend/vite.config.ts) において、 `/api/` をバックエンド（compose 内ホスト名 `backend:8080`）へプロキシする。`/api/**` で API を叩く設計となり、ブラウザからは同一オリジンとして認識される。
+- **本番**：環境変数 `WEB_DIST_DIR` に有効なディレクトリが指定されていれば、[`main.go`](backend/cmd/main.go) が [`SpaHandler`](backend/cmd/static.go) により SPA を `GET /{path...}` で配信する。
+- **フロントの API 呼び出し**：[frontend/apis/API.ts](frontend/apis/API.ts) において、 `credentials: "include"` により Cookie とともにリクエストを送信する。
+
+---
+
+## 認証フロー
+
+<!-- 以下はコード上の順序・手段の説明であり、設計理由や脅威モデルは後段の自分用セクションへ委ねます。 -->
+
+1. **`GET /api/auth/google/start`**（[`handlers_auth.go`](backend/cmd/handlers_auth.go)）
+
+   ランダムな `state` と `nonce` を生成する。
+
+   両方を署名付き Cookie（[`MakeSignedCookie`](backend/cmd/cookie.go)）としてセットする。
+
+   そのうえで `AuthCodeURL` に `state`・`nonce`・環境変数 `REDIRECT_URI` を載せ、[Google の認証画面へ HTTP 302 リダイレクト](backend/cmd/handlers_auth.go)する。
+
+2. **`GET /api/auth/callback/google`**
+
+   まず Cookie の `state` を検証する。
+
+   その後認可コードを `Exchange` し、得られた OpenID Token を OIDC verifier で検証する。
+
+   さらに Cookie と ID Token claims の `nonce` を検証する。
+
+   そして OpenID Token のフィールドである `sub` で `users` を upsert し、内部ユーザー ID を得る。
+
+3. **セッション用 Cookie**
+
+   - `access_token`：内部ユーザー ID を `sub` にした JWT（署名鍵、有効時間設定済）。
+
+      値は署名付き Cookie。Cookie の **`Max-Age` はログイン／リフレッシュ時とも 900 秒で固定**。
+
+   - `refresh_token`：ランダムな文字列を Redis に `SET`（TTL設定済）。
+
+      同名の署名付き Cookie の `Max-Age` はコード上 `604800` 秒。
+
+4. **ログイン完了後**：`${current_host}/timeline` へリダイレクト。
+
+5. **`WithAuth()`**
+
+   認証ミドルウェアとなる関数。`access_token` Cookie の存在・正当性を検証する。
+
+   もし Cookie が存在しなければ `refresh_token` Cookie を確認し、それをキーとして Redis から値である `userId` を得ることで `access_token` を再発行する。
+
+6. **ログアウト**：`access_token` / `refresh_token` Cookie を削除し、Redis のリフレッシュキーを `DEL`。
+
+7. **Cookie の共通属性**：`HttpOnly: true`、`SameSite: Lax`、`Secure` はデプロイ時 `true`。値は名前と値から HMAC（`HMAC_SECRET_KEY`）した署名付き。
+
+8. **OAuth のスコープ**：`openid` のみ。
+
+### 認証・Cookie・セッションについて（設計判断・自分用メモ）
+
+<!-- 追記例: state を入れた狙い／nonce と ID Token の組み合わせの狙い／HttpOnly と SameSite のトレードオフ／なぜ Redis に refresh を載せているか／OIDC verifier に ClientID を渡している意味／JWT と Cookie Max-Age の関係について -->
+
+（追記予定）
+
+---
+
+## シーケンス図
+
+### Google ログイン〜セッション Cookie まで
+
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant Backend
+    participant Google
+    participant Postgres
+    participant Redis
+    Browser->>Backend: GET /api/auth/google/start
+    Backend->>Browser: Set-Cookie signed state nonce Max-Age 300
+    Backend->>Browser: Redirect to Google auth URL with state nonce
+    Browser->>Google: User signs in consent
+    Google->>Browser: Redirect to REDIRECT_URI with code and state query
+    Browser->>Backend: GET /api/auth/callback/google
+    Backend->>Backend: Verify state Cookie matches query state
+    Backend->>Browser: Delete state Cookie
+    Backend->>Google: Exchange code for tokens
+    Google->>Backend: id_token optional access_token
+    Backend->>Backend: OIDC Verify id_token ClientID issuer
+    Backend->>Backend: Verify nonce Cookie matches token claims nonce
+    Backend->>Browser: Delete nonce Cookie
+    Backend->>Postgres: Upsert users by google_sub return id
+    Postgres->>Backend: user id
+    Backend->>Backend: JWT access token JWT_SECRET ACCESS_TOKEN_DURATION
+    Backend->>Browser: Set-Cookie signed access_token Max-Age 900
+    Backend->>Backend: Generate refresh_token random Store in Redis TTL REFRESH_TOKEN_DURATION hours
+    Backend->>Browser: Set-Cookie signed refresh_token Max-Age 604800
+    Backend->>Browser: Redirect to APP_PUBLIC_URL timeline path
+```
+
+### 認証済み API リクエスト
+
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant Backend
+    participant Redis
+    Browser->>Backend: API request with Cookie credentials include
+    Backend->>Backend: WithAuth RequireAuth
+    alt access_token Cookie valid JWT
+        Backend->>Backend: verifyAccessTokenJWT parse sub UUID
+        Backend->>Browser: Invoke handler AuthResult Sub no new cookie
+    else access_token missing or invalid refresh_token path
+        Backend->>Backend: Verify refresh Cookie
+        Backend->>Redis: GET refresh key
+        Redis->>Backend: user id string if exists
+        Backend->>Backend: New JWT access_token
+        Backend->>Browser: Set-Cookie new access_token Max-Age 900
+        Backend->>Browser: Invoke handler AuthResult Sub
+    else both fail
+        Backend->>Browser: 401 invalid session
+    end
+```
+
+---
+
+## ER 図
+
+マイグレーションは [`backend/database/migrations/`](backend/database/migrations/) を参照。
 
 ```mermaid
 erDiagram
-    users ||--o{ likes : likes
-    posts ||--o{ likes : liked_by
+    users ||--o{ posts : authored_by
+    users ||--o{ likes : user_likes
+    posts ||--o{ likes : post_likes
+    users ||--o{ follows : follower_side
+    users ||--o{ follows : followee_side
     users {
-        UUID id
-        VARCHAR(255) email
-        VARCHAR(255) hashed_password
-        BOOLEAN verified
-        TIMESTAMPTZ created_at
+        uuid id PK
+        text google_sub UK
+        timestamptz created_at
+        varchar username
     }
     posts {
-        UUID id
-        UUID users(id)
-        TEXT body
-        TIMESTAMPTZ created_at
+        uuid id PK
+        uuid user_id FK
+        text body
+        timestamptz created_at
+        varchar username
     }
     likes {
-        UUID users(id)PK
-        UUID posts(id)PK
-        TIMESTAMPTZ created_at
+        uuid user_id FK
+        uuid post_id FK
+        timestamptz created_at
+    }
+    follows {
+        uuid follower_id FK
+        uuid followee_id FK
+        timestamptz created_at
     }
 ```
 
+**注記**
 
+- `users.username`：NULL 許容。`(username IS NOT NULL AND username <> '')` の行にのみ効く一意制約インデックス `users_username_unique`（migration `000007`）。ER 図では部分的 UNIQUE を表現しきれないため上記のみ記載する。
+- `posts.username`：投稿時に表示用として保持する列（migration `000006`）。
+- `likes`：`PRIMARY KEY (user_id, post_id)` により、同一ユーザーが同一投稿に複数の like を挿入できない。
+- `follows`：`follower_id` と `followee_id` はいずれも `users.id` を参照。主キーは `(follower_id, followee_id)`。
 
-To process the changes of likes precisely, I made a table `likes` and let `users(id)` and `posts(id)` a composite primary key.
+<!-- 中立な説明のみ一行：`likes` テーブルの複合主キーにより、ユーザー×投稿単位での重複した「いいね」行はデータベース上拒否されます。 -->
 
-We can reject the duplicated likes by consulting the composite primary key.
+### データモデル・非正規化について（設計判断・自分用メモ）
 
+<!-- 追記例: likes を列ではなくテーブルにした理由／posts.username を持つ理由／部分一意インデックスの意図 -->
 
+（追記予定）
 
-like column v.s. Likes Table
+---
 
-In this app, we want to enable users to like a post only once and undo the like.
+## 環境変数
 
-Therefore, we have to keep track of that who liked what posts.
+一覧は [.env.example](.env.example)。バックエンドが参照する変数と用途：
 
-Then, if you try to do this by adding a `like` column in posts, then it would break 1NF.
+| 変数 | 用途 |
+|------|------|
+| `POSTGRES_URL` | pgx の接続文字列 |
+| `CLIENT_ID` / `CLIENT_SECRET` | Google OAuth クライアント |
+| `REDIRECT_URI` | OAuth redirect（`oauth2.Config` と `AuthCodeURL` の両方） |
+| `HMAC_SECRET_KEY` | Cookie 署名（[`SignCookie`](backend/cmd/cookie.go)） |
+| `JWT_SECRET` | アクセス JWT の HMAC-SHA256 署名 |
+| `ACCESS_TOKEN_DURATION` | アクセス JWT の有効時間（分） |
+| `REFRESH_TOKEN_DURATION` | Redis に保存するリフレッシュの TTL（時間・数値として整数時間） |
+| `APP_PUBLIC_URL` | OAuth 後リダイレクト先ベース URL |
+| `COOKIE_SECURE` | `true` / `1` で `Secure` Cookie |
+| `REDIS_ADDR` または（`REDIS_HOST` と `REDIS_PORT` の組み合わせ） | Redis 接続（未設定時のデフォルトは compose では `redis:6379`） |
+| `REDIS_PASSWORD` | Redis 認証がある場合 |
+| `PORT` | サーバ公開ポート（未設定時 `8080`） |
+| `WEB_DIST_DIR` | 静的 SPA を配信するディレクトリ（任意） |
 
-Therefore, we prefer to user Likes table to realize the functionality.
+---
+
+## ローカル開発
+
+前提：ルートで `.env` を用意（項目は [.env.example](.env.example)）。Google Cloud Console 側で OAuth クライアントと `REDIRECT_URI` が一致していること。
+
+```bash
+docker compose -f docker-compose.dev.yml up --build
+```
+
+想定ポート（[`docker-compose.dev.yml`](docker-compose.dev.yml)）：
+
+- フロント（Vite）: `5173`
+- API: `8080`
+- PostgreSQL: `5432`
+- Redis: `6379`
+
+Vite がプロキシ先に `backend` ホスト名を使っているため、**開発時は上記 compose 経由でフロントと API をまとめて起動するのがそのまま動かしやすい**。
+
+---
+
+## 開発ログ・振り返り
+
+<!-- 迷った点・採用しなかった案・時間をかけた箇所 -->
+
+（追記予定）
+
+---
+
