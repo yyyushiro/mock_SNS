@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -10,31 +11,44 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func sqlNullStringToString(ns sql.NullString) string {
+	if ns.Valid {
+		return ns.String
+	}
+	return ""
+}
+
 type Post struct {
-	PostId    uuid.UUID
+	Id        uuid.UUID
 	UserId    uuid.UUID
+	Username  string
 	Body      string
 	CreatedAt time.Time
 	LikedByMe bool
 	LikeCount int
 }
 
-type Like struct {
-	LikerId   uuid.UUID `json:"liker_id"`
-	PostId    uuid.UUID `json:"post_id"`
-	CreatedAt time.Time `json:"created_at"`
+type User struct {
+	Id        uuid.UUID
+	Username  sql.NullString
+	CreatedAt time.Time
 }
 
 func AddPost(sub uuid.UUID, body string, pool *pgxpool.Pool, ctx context.Context) (*Post, error) {
 	var post Post
+	var username sql.NullString
 	err := pool.QueryRow(ctx,
-		`INSERT INTO posts (user_id, body) VALUES ($1, $2)
-     RETURNING id, user_id, body, created_at`,
+		`INSERT INTO posts (user_id, body, username)
+		 SELECT $1, $2, u.username
+		 FROM users u
+		 WHERE u.id = $1
+		 RETURNING id, user_id, username, body, created_at`,
 		sub, body,
-	).Scan(&post.PostId, &post.UserId, &post.Body, &post.CreatedAt)
+	).Scan(&post.Id, &post.UserId, &username, &post.Body, &post.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("Inserting post: %w", err)
 	}
+	post.Username = sqlNullStringToString(username)
 	return &post, nil
 }
 
@@ -61,7 +75,7 @@ func DeletePost(userId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Contex
 
 func GetMyPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) ([]Post, error) {
 	rows, err := pool.Query(ctx, `
-		SELECT id, body, created_at,
+		SELECT id, user_id, username, body, created_at,
 			EXISTS (
 				SELECT 1 FROM likes
 				WHERE likes.user_id = $1 AND likes.post_id = posts.id
@@ -74,11 +88,13 @@ func GetMyPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) ([]Po
 	var posts []Post
 	for rows.Next() {
 		var p Post
-		if err := rows.Scan(&p.PostId, &p.Body, &p.CreatedAt, &p.LikedByMe); err != nil {
+		var username sql.NullString
+		if err := rows.Scan(&p.Id, &p.UserId, &username, &p.Body, &p.CreatedAt, &p.LikedByMe); err != nil {
 			return nil, fmt.Errorf("Scanning posts: %w", err)
 		}
+		p.Username = sqlNullStringToString(username)
 
-		p.LikeCount, err = getLikeCount(p.PostId, pool, ctx)
+		p.LikeCount, err = aggregateLikeCount(p.Id, pool, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -93,7 +109,7 @@ func GetMyPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) ([]Po
 }
 
 func GetPublicPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) ([]Post, error) {
-	rows, err := pool.Query(ctx, `SELECT id, body, created_at,
+	rows, err := pool.Query(ctx, `SELECT id, user_id, username, body, created_at,
 	EXISTS (
 		SELECT 1 FROM likes
 		WHERE likes.user_id = $1 AND likes.post_id = posts.id
@@ -110,11 +126,13 @@ func GetPublicPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (
 	var posts []Post
 	for rows.Next() {
 		var p Post
-		if err := rows.Scan(&p.PostId, &p.Body, &p.CreatedAt, &p.LikedByMe); err != nil {
+		var username sql.NullString
+		if err := rows.Scan(&p.Id, &p.UserId, &username, &p.Body, &p.CreatedAt, &p.LikedByMe); err != nil {
 			return nil, fmt.Errorf("Scanning posts: %w", err)
 		}
+		p.Username = sqlNullStringToString(username)
 
-		p.LikeCount, err = getLikeCount(p.PostId, pool, ctx)
+		p.LikeCount, err = aggregateLikeCount(p.Id, pool, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -129,7 +147,7 @@ func GetPublicPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (
 }
 
 func GetFollowingPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) ([]Post, error) {
-	rows, err := pool.Query(ctx, `SELECT id, body, created_at,
+	rows, err := pool.Query(ctx, `SELECT id, user_id, username, body, created_at,
 	EXISTS (
 		SELECT 1 FROM likes
 		WHERE likes.user_id = $1 AND likes.post_id = posts.id
@@ -146,11 +164,13 @@ func GetFollowingPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context
 	var posts []Post
 	for rows.Next() {
 		var p Post
-		if err := rows.Scan(&p.PostId, &p.Body, &p.CreatedAt, &p.LikedByMe); err != nil {
+		var username sql.NullString
+		if err := rows.Scan(&p.Id, &p.UserId, &username, &p.Body, &p.CreatedAt, &p.LikedByMe); err != nil {
 			return nil, fmt.Errorf("Scanning posts: %w", err)
 		}
+		p.Username = sqlNullStringToString(username)
 
-		p.LikeCount, err = getLikeCount(p.PostId, pool, ctx)
+		p.LikeCount, err = aggregateLikeCount(p.Id, pool, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -165,40 +185,38 @@ func GetFollowingPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context
 }
 
 // LikePost increments likes with the check of no duplicates.
-func LikePost(likerId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (*Like, error) {
+func LikePost(likerId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) error {
 	// I'm not sure if I have to validate likerid and postid. I will do them later if needed.
-	var l Like
-	err := pool.QueryRow(ctx, `SELECT user_id, post_id, created_at FROM likes WHERE user_id = $1 AND post_id = $2`, likerId, postId).Scan(&l.LikerId, &l.PostId, &l.CreatedAt)
+	_, err := pool.Exec(ctx, `SELECT user_id, post_id, created_at FROM likes WHERE user_id = $1 AND post_id = $2`, likerId, postId)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			err := pool.QueryRow(ctx, `INSERT INTO likes (user_id, post_id) VALUES ($1, $2) RETURNING user_id, post_id, created_at`, likerId, postId).Scan(&l.LikerId, &l.PostId, &l.CreatedAt)
+			_, err := pool.Exec(ctx, `INSERT INTO likes (user_id, post_id) VALUES ($1, $2)`, likerId, postId)
 			if err != nil {
-				return nil, fmt.Errorf("Scanned like: %w", err)
+				return fmt.Errorf("Scanned like: %w", err)
 			}
-			return &l, nil
+			return nil
 		}
-		return nil, fmt.Errorf("Scanned like: %w", err)
+		return fmt.Errorf("Scanned like: %w", err)
 	}
-	return &l, fmt.Errorf("User %d already liked post %d", l.LikerId, l.PostId)
+	return fmt.Errorf("User %d already liked post %d", likerId, postId)
 }
 
 // UndoLikePost undos the likes.
-func UndoLikePost(likerId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (*Like, error) {
-	var l Like
-	err := pool.QueryRow(ctx, `SELECT user_id, post_id, created_at FROM likes WHERE user_id = $1 AND post_id = $2`, likerId, postId).Scan(&l.LikerId, &l.PostId, &l.CreatedAt)
+func UndoLikePost(likerId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) error {
+	_, err := pool.Exec(ctx, `SELECT user_id, post_id, created_at FROM likes WHERE user_id = $1 AND post_id = $2`, likerId, postId)
 	if err != nil {
-		return nil, fmt.Errorf("Scanned like: %w", err)
+		return fmt.Errorf("Scanned like: %w", err)
 	}
 
-	err = pool.QueryRow(ctx, `DELETE FROM likes WHERE user_id = $1 AND post_id = $2 RETURNING user_id, post_id, created_at`, likerId, postId).Scan(&l.LikerId, &l.PostId, &l.CreatedAt)
+	_, err = pool.Exec(ctx, `DELETE FROM likes WHERE user_id = $1 AND post_id = $2 RETURNING user_id, post_id, created_at`, likerId, postId)
 	if err != nil {
-		return nil, fmt.Errorf("Deleted a like: %w", err)
+		return fmt.Errorf("Deleted a like: %w", err)
 	}
 
-	return &l, nil
+	return nil
 }
 
-func getLikeCount(postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (int, error) {
+func aggregateLikeCount(postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (int, error) {
 	var count int
 	// While this query is related to multiple rows, since it eventually returns a single value, user QueryRow().
 	err := pool.QueryRow(ctx, `SELECT COUNT(post_id) FROM likes WHERE post_id = $1`, postId).Scan(&count)
@@ -208,21 +226,8 @@ func getLikeCount(postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (in
 	return count, nil
 }
 
-func findUserByPost(postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (uuid.UUID, error) {
-	var userId uuid.UUID
-	if err := pool.QueryRow(ctx, `SELECT user_id from posts WHERE id = $1`, postId).Scan(&userId); err != nil {
-		return userId, fmt.Errorf("Finding userId by postId: %w", err)
-	}
-	return userId, nil
-}
-
-func AddFollow(followerId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) error {
-	followeeId, err := findUserByPost(postId, pool, ctx)
-	if err != nil {
-		return err
-	}
-
-	_, err = pool.Exec(ctx, "INSERT INTO follows (follower_id, followee_id) VALUES ($1, $2)", followerId, followeeId)
+func AddFollow(followerId, followeeId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) error {
+	_, err := pool.Exec(ctx, "INSERT INTO follows (follower_id, followee_id) VALUES ($1, $2)", followerId, followeeId)
 	if err != nil {
 		return fmt.Errorf("Inserting into follows: %w", err)
 	}
@@ -230,16 +235,40 @@ func AddFollow(followerId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Con
 	return nil
 }
 
-func DeleteFollow(followerId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) error {
-	followeeId, err := findUserByPost(postId, pool, ctx)
-	if err != nil {
-		return err
-	}
-
-	_, err = pool.Exec(ctx, "DELETE FROM follows WHERE follower_id = $1 AND followee_id = $2", followerId, followeeId)
+func DeleteFollow(followerId, followeeId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) error {
+	_, err := pool.Exec(ctx, "DELETE FROM follows WHERE follower_id = $1 AND followee_id = $2", followerId, followeeId)
 	if err != nil {
 		return fmt.Errorf("Deleting from follows: %w", err)
 	}
 
+	return nil
+}
+
+func GetUserInfo(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (*User, error) {
+	var user User
+	err := pool.QueryRow(ctx, "SELECT id, username, created_at FROM users WHERE id = $1", userId).Scan(&user.Id, &user.Username, &user.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("Getting userinfo: %w", err)
+	}
+
+	return &user, nil
+}
+
+func UpdateMyUsername(userID uuid.UUID, username string, pool *pgxpool.Pool, ctx context.Context) error {
+	tag, err := pool.Exec(ctx, `UPDATE users SET username = $1 WHERE id = $2`, username, userID)
+	if err != nil {
+		return fmt.Errorf("updating username in users table: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating username in users table: %w", pgx.ErrNoRows)
+	}
+
+	tag, err = pool.Exec(ctx, `UPDATE posts SET username = $1 WHERE user_id = $2`, username, userID)
+	if err != nil {
+		return fmt.Errorf("updating username in posts table: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("updating username in posts table: %w", pgx.ErrNoRows)
+	}
 	return nil
 }

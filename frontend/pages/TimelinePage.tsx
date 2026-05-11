@@ -2,18 +2,22 @@ import { useEffect, useState } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import {
     deletePost,
-    followPost,
+    followUser,
     getFollowingPosts,
     getMyPosts,
     getPublicPosts,
     likePost,
-    logout,
-    unfollowPost,
+    unfollowUser,
     unlikePost,
     type Post,
 } from "../apis/API.ts"
 
 type FeedView = "mine" | "public" | "following"
+
+function postDisplayAuthor(post: Post): string {
+    const name = post.username.trim()
+    return name !== "" ? name : post.user_id
+}
 
 function feedViewFromSearch(view: string | null): FeedView {
     if (view === "feeds") return "public"
@@ -55,8 +59,6 @@ export default function TimeLinePage() {
     const [followActionError, setFollowActionError] = useState<string | null>(
         null,
     )
-    const [loggingOut, setLoggingOut] = useState(false)
-    const [logoutError, setLogoutError] = useState<string | null>(null)
 
     useEffect(() => {
         let cancelled = false
@@ -132,7 +134,7 @@ export default function TimeLinePage() {
         setFollowActionError(null)
         setPendingFollowPostId(post.id)
         try {
-            await followPost(post.id)
+            await followUser(post.user_id)
             const data = await getPublicPosts()
             setPosts(data)
         } catch (err: unknown) {
@@ -149,7 +151,7 @@ export default function TimeLinePage() {
         setFollowActionError(null)
         setPendingFollowPostId(post.id)
         try {
-            await unfollowPost(post.id)
+                await unfollowUser(post.user_id)
             const data = await getFollowingPosts()
             setPosts(data)
         } catch (err: unknown) {
@@ -174,21 +176,6 @@ export default function TimeLinePage() {
             setDeletePostError(message)
         } finally {
             setPendingDeletePostId(null)
-        }
-    }
-
-    async function handleLogout() {
-        setLogoutError(null)
-        setLoggingOut(true)
-        try {
-            await logout()
-            navigate("/", { replace: true })
-        } catch (err: unknown) {
-            const message =
-                err instanceof Error ? err.message : "Could not log out"
-            setLogoutError(message)
-        } finally {
-            setLoggingOut(false)
         }
     }
 
@@ -253,16 +240,12 @@ export default function TimeLinePage() {
                 </div>
                 <div className="timeline-header__end">
                     {!loading && !error && (
-                        <button
-                            type="button"
+                        <Link
+                            to="/mypage"
                             className="btn btn--primary"
-                            disabled={loggingOut}
-                            onClick={() => {
-                                void handleLogout()
-                            }}
                         >
-                            {loggingOut ? "Logging out…" : "Log out"}
-                        </button>
+                            My page
+                        </Link>
                     )}
                 </div>
             </header>
@@ -291,20 +274,10 @@ export default function TimeLinePage() {
                     !error &&
                     (posts.length === 0 ? (
                         <>
-                            {logoutError && (
-                                <p className="app-alert" role="alert">
-                                    {logoutError}
-                                </p>
-                            )}
                             <p className="timeline-empty">{emptyMessage}</p>
                         </>
                     ) : (
                         <>
-                            {logoutError && (
-                                <p className="app-alert" role="alert">
-                                    {logoutError}
-                                </p>
-                            )}
                             {likeToggleError && (
                                 <p className="app-alert" role="alert">
                                     {likeToggleError}
@@ -362,6 +335,11 @@ export default function TimeLinePage() {
                                                 <span className="post-card__date post-card__date--placeholder">
                                                     —
                                                 </span>
+                                            )}
+                                            {footerExtra && (
+                                                <div className="post-card__author">
+                                                    {postDisplayAuthor(post)}
+                                                </div>
                                             )}
                                             {bodyTrimmed ? (
                                                 <div className="post-card-body">

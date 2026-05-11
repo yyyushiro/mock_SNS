@@ -74,6 +74,12 @@ body {
     background: var(--color-btn-hover);
 }
 
+a.btn {
+    text-decoration: none;
+    display: inline-block;
+    text-align: center;
+}
+
 .timeline-page {
     min-height: 100vh;
     background: var(--color-feed-bg);
@@ -200,6 +206,13 @@ body {
 
 .post-card__date--placeholder {
     color: var(--color-muted);
+}
+
+.post-card__author {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--color-text);
+    margin-bottom: 0.5rem;
 }
 
 .post-card-body {
@@ -379,4 +392,75 @@ body {
 .make-post-alert {
     width: min(560px, 92vw);
     margin-top: 1rem;
+}
+
+.my-page {
+    min-height: 100vh;
+    background: var(--color-feed-bg);
+    padding: 1rem clamp(1rem, 5vw, 2rem) 2rem;
+    max-width: 560px;
+    margin: 0 auto;
+}
+
+.my-page__header {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.my-page__title {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+}
+
+.my-page__main {
+    background: var(--color-white);
+    border-radius: var(--radius);
+    padding: 1.25rem 1.5rem;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.my-page__meta {
+    font-size: 0.9rem;
+    color: var(--color-muted);
+    margin: 0 0 1.25rem;
+    line-height: 1.5;
+}
+
+.my-page__code {
+    font-size: 0.8rem;
+    word-break: break-all;
+}
+
+.my-page__form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 2rem;
+}
+
+.my-page__label {
+    font-weight: 500;
+    font-size: 0.9rem;
+}
+
+.my-page__input {
+    font-family: inherit;
+    font-size: 1rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--radius-btn);
+    border: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+.my-page__input:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(51, 51, 51, 0.2);
+}
+
+.my-page__logout {
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+    padding-top: 1.25rem;
 }

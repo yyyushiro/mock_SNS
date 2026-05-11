@@ -1,5 +1,7 @@
 export type Post = {
     id: string
+    user_id: string
+    username: string
     body: string
     created_at: string
     liked_by_me: boolean
@@ -8,6 +10,8 @@ export type Post = {
 
 type PostWire = {
     id?: unknown
+    user_id?: unknown
+    username?: unknown
     body?: unknown
     created_at?: unknown
     liked_by_me?: unknown
@@ -17,6 +21,8 @@ type PostWire = {
 function postRowFromJson(row: PostWire): Post {
     return {
         id: String(row.id ?? ""),
+        user_id: String(row.user_id ?? ""),
+        username: String(row.username ?? ""),
         body: String(row.body ?? ""),
         created_at: String(row.created_at ?? ""),
         liked_by_me: Boolean(row.liked_by_me),
@@ -77,9 +83,9 @@ export async function getFollowingPosts(): Promise<Post[]> {
     return postsFromJson(data)
 }
 
-export async function followPost(postId: string): Promise<void> {
+export async function followUser(userId: string): Promise<void> {
     const response = await fetch(
-        `/api/posts/${encodeURIComponent(postId)}/follow`,
+        `/api/user/${encodeURIComponent(userId)}/follow`,
         {
             method: "POST",
             credentials: "include",
@@ -90,9 +96,9 @@ export async function followPost(postId: string): Promise<void> {
     }
 }
 
-export async function unfollowPost(postId: string): Promise<void> {
+export async function unfollowUser(userId: string): Promise<void> {
     const response = await fetch(
-        `/api/posts/${encodeURIComponent(postId)}/follow`,
+        `/api/user/${encodeURIComponent(userId)}/follow`,
         {
             method: "DELETE",
             credentials: "include",
@@ -121,13 +127,6 @@ export async function makePost(body: string): Promise<Post> {
     return postRowFromJson(raw as PostWire)
 }
 
-function assertJsonResponse(response: Response): void {
-    const contentType = response.headers.get("content-type")
-    if (!contentType || !contentType.includes("application/json")) {
-        throw new TypeError("Oops, we haven't got JSON!")
-    }
-}
-
 export async function likePost(postId: string): Promise<void> {
     const response = await fetch(
         `/api/posts/${encodeURIComponent(postId)}/likes`,
@@ -139,8 +138,6 @@ export async function likePost(postId: string): Promise<void> {
     if (!response.ok) {
         throw new Error(`Response status: ${response.status}`)
     }
-    assertJsonResponse(response)
-    await response.json()
 }
 
 export async function unlikePost(postId: string): Promise<void> {
@@ -154,8 +151,6 @@ export async function unlikePost(postId: string): Promise<void> {
     if (!response.ok) {
         throw new Error(`Response status: ${response.status}`)
     }
-    assertJsonResponse(response)
-    await response.json()
 }
 
 export async function deletePost(postId: string): Promise<void> {
@@ -179,4 +174,58 @@ export async function logout(): Promise<void> {
     if (!response.ok) {
         throw new Error(`Response status: ${response.status}`)
     }
+}
+
+export type MyUserInfo = {
+    id: string
+    username: string
+    created_at: string
+}
+
+type MyUserInfoWire = {
+    id?: unknown
+    username?: unknown
+    created_at?: unknown
+}
+
+function myUserInfoFromJson(row: MyUserInfoWire): MyUserInfo {
+    return {
+        id: String(row.id ?? ""),
+        username: String(row.username ?? ""),
+        created_at: String(row.created_at ?? ""),
+    }
+}
+
+export async function getMyInfo(): Promise<MyUserInfo> {
+    const response = await fetch("/api/user/me", {
+        method: "GET",
+        credentials: "include",
+    })
+    if (!response.ok) {
+        throw new Error(`Response status: ${response.status}`)
+    }
+    const contentType = response.headers.get("content-type")
+    if (!contentType || !contentType.includes("application/json")) {
+        throw new TypeError("Oops, we haven't got JSON!")
+    }
+    const raw: unknown = await response.json()
+    return myUserInfoFromJson(raw as MyUserInfoWire)
+}
+
+export async function updateMyUsername(username: string): Promise<MyUserInfo> {
+    const response = await fetch("/api/user/me", {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username }),
+    })
+    if (!response.ok) {
+        throw new Error(`Response status: ${response.status}`)
+    }
+    const contentType = response.headers.get("content-type")
+    if (!contentType || !contentType.includes("application/json")) {
+        throw new TypeError("Oops, we haven't got JSON!")
+    }
+    const raw: unknown = await response.json()
+    return myUserInfoFromJson(raw as MyUserInfoWire)
 }

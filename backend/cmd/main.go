@@ -40,15 +40,18 @@ func main() {
 	mux.HandleFunc("GET /api/auth/google/start", app.AuthenticationURIHandler)
 	mux.HandleFunc("GET /api/auth/callback/google", app.GetAccessTokenHandler)
 	mux.HandleFunc("POST /api/posts", app.WithAuth(app.MakePostHandler))
+	mux.HandleFunc("GET /api/user/me", app.WithAuth(app.GetMyInfoHandler))
+	mux.HandleFunc("PATCH /api/user/me", app.WithAuth(app.PatchMyUsernameHandler))
 	mux.HandleFunc("GET /api/user/me/posts", app.WithAuth(app.GetMyPostsHandler))
 	mux.HandleFunc("DELETE /api/posts/{id}", app.WithAuth(app.DeletePostHandler))
 	mux.HandleFunc("POST /api/posts/{id}/likes", app.WithAuth(app.LikePostHandler))
 	mux.HandleFunc("DELETE /api/posts/{id}/likes", app.WithAuth(app.UndoLikePostHandler))
-	mux.HandleFunc("POST /api/posts/{id}/follow", app.WithAuth(app.FollowUserHandler))
-	mux.HandleFunc("DELETE /api/posts/{id}/follow", app.WithAuth(app.UnfollowUserHandler))
+	mux.HandleFunc("POST /api/user/{id}/follow", app.WithAuth(app.FollowUserHandler))
+	mux.HandleFunc("DELETE /api/user/{id}/follow", app.WithAuth(app.UnfollowUserHandler))
 	mux.HandleFunc("POST /api/auth/logout", app.WithAuth(app.LogOutHandler))
 	mux.HandleFunc("GET /api/user/me/posts/public", app.WithAuth(app.GetPublicPostsHandler))
 	mux.HandleFunc("GET /api/user/me/posts/following", app.WithAuth(app.GetFollowingPostsHandler))
+	mux.HandleFunc("GET /api/user/{id}", app.WithAuth(app.GetOtherUserInfoHandler))
 	// Make sure the directory is valid.
 	if dir := strings.TrimSpace(os.Getenv("WEB_DIST_DIR")); dir != "" {
 		if fi, err := os.Stat(dir); err == nil && fi.IsDir() {

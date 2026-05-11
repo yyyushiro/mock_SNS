@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"time"
@@ -10,8 +11,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// These structs are for HTTP response and different from the ones for database.
-// They trim some fields such as userId.
+// PostResponse mirrors the fields exposed from Post for JSON.
 
 type MakePostRequest struct {
 	Body string `json:"body"`
@@ -19,6 +19,8 @@ type MakePostRequest struct {
 
 type PostResponse struct {
 	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Username  string    `json:"username"`
 	Body      string    `json:"body"`
 	CreatedAt time.Time `json:"created_at"`
 	LikedByMe bool      `json:"liked_by_me"`
@@ -27,7 +29,9 @@ type PostResponse struct {
 
 func postToResponse(p Post) PostResponse {
 	return PostResponse{
-		ID:        p.PostId,
+		ID:        p.Id,
+		UserID:    p.UserId,
+		Username:  p.Username,
 		Body:      p.Body,
 		CreatedAt: p.CreatedAt,
 		LikedByMe: p.LikedByMe,
@@ -56,16 +60,13 @@ func (a *App) GetMyPostsHandler(w http.ResponseWriter, r *http.Request) {
 		out[i] = postToResponse(posts[i])
 	}
 
-	body, err := json.Marshal(out)
+	err = WriteJsonResponseBody(w, out, http.StatusOK)
 	if err != nil {
-		log.Printf("encode json: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		if errors.Is(err, ErrJsonEncode) {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		log.Printf("Writing my posts response: %v", err)
 		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write(body); err != nil {
-		log.Printf("write response: %v", err)
 	}
 }
 
@@ -96,16 +97,12 @@ func (a *App) MakePostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := postToResponse(*post)
-	body, err := json.Marshal(resp)
+	err = WriteJsonResponseBody(w, resp, http.StatusCreated)
 	if err != nil {
-		log.Printf("encode json: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	if _, err := w.Write(body); err != nil {
-		log.Printf("write response: %v", err)
+		if errors.Is(err, ErrJsonEncode) {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		log.Printf("Writing create post response: %v", err)
 		return
 	}
 	log.Printf("made post successfully: %s", req.Body)
@@ -154,24 +151,14 @@ func (a *App) LikePostHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	like, err := LikePost(result.Sub, postID, a.Pool, ctx)
+	err = LikePost(result.Sub, postID, a.Pool, ctx)
 	if err != nil {
 		log.Printf("Liked a post: %s", err)
 		http.Error(w, "faied to like a post", http.StatusInternalServerError)
 		return
 	}
 
-	body, err := json.Marshal(like)
-	if err != nil {
-		log.Printf("encode json: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	if _, err := w.Write(body); err != nil {
-		log.Printf("write response: %v", err)
-	}
 }
 
 func (a *App) UndoLikePostHandler(w http.ResponseWriter, r *http.Request) {
@@ -191,24 +178,14 @@ func (a *App) UndoLikePostHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	like, err := UndoLikePost(result.Sub, postID, a.Pool, ctx)
+	err = UndoLikePost(result.Sub, postID, a.Pool, ctx)
 	if err != nil {
 		log.Printf("Undid a like: %s", err)
 		http.Error(w, "faied to undo a like", http.StatusInternalServerError)
 		return
 	}
 
-	body, err := json.Marshal(like)
-	if err != nil {
-		log.Printf("encode json: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write(body); err != nil {
-		log.Printf("write response: %v", err)
-	}
 }
 
 func (a *App) GetPublicPostsHandler(w http.ResponseWriter, r *http.Request) {
@@ -231,16 +208,13 @@ func (a *App) GetPublicPostsHandler(w http.ResponseWriter, r *http.Request) {
 	for i := range posts {
 		out[i] = postToResponse(posts[i])
 	}
-	body, err := json.Marshal(out)
+	err = WriteJsonResponseBody(w, out, http.StatusOK)
 	if err != nil {
-		log.Printf("encode json: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		if errors.Is(err, ErrJsonEncode) {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		log.Printf("Writing public posts response: %v", err)
 		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write(body); err != nil {
-		log.Printf("write response: %v", err)
 	}
 }
 
@@ -264,67 +238,13 @@ func (a *App) GetFollowingPostsHandler(w http.ResponseWriter, r *http.Request) {
 	for i := range posts {
 		out[i] = postToResponse(posts[i])
 	}
-	body, err := json.Marshal(out)
+
+	err = WriteJsonResponseBody(w, out, http.StatusOK)
 	if err != nil {
-		log.Printf("encode json: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		if errors.Is(err, ErrJsonEncode) {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		log.Printf("Writing following posts response: %v", err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write(body); err != nil {
-		log.Printf("write response: %v", err)
-	}
-}
-
-func (a *App) FollowUserHandler(w http.ResponseWriter, r *http.Request) {
-	result, ok := AuthFromRequest(r)
-	if !ok {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	strPostId := r.PathValue("id")
-	postID, err := uuid.Parse(strPostId)
-	if err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-	err = AddFollow(result.Sub, postID, a.Pool, ctx)
-	if err != nil {
-		log.Print(err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
-func (a *App) UnfollowUserHandler(w http.ResponseWriter, r *http.Request) {
-	result, ok := AuthFromRequest(r)
-	if !ok {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	strPostId := r.PathValue("id")
-	postID, err := uuid.Parse(strPostId)
-	if err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-	err = DeleteFollow(result.Sub, postID, a.Pool, ctx)
-	if err != nil {
-		log.Print(err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
 }
