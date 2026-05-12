@@ -127,9 +127,58 @@ Google アカウントでのログイン、投稿・いいね・フォロー、�
 
 ### 認証・Cookie・セッションについて（設計判断・自分用メモ）
 
-<!-- 追記例: state を入れた狙い／nonce と ID Token の組み合わせの狙い／HttpOnly と SameSite のトレードオフ／なぜ Redis に refresh を載せているか／OIDC verifier に ClientID を渡している意味／JWT と Cookie Max-Age の関係について -->
+- state：「そのRedirectURIは本当に自分起点で作り出されたものか？」
 
-（追記予定）
+    CookieとRedirectURIのパラメータとして存在する。攻撃者が用意したRedirectURIを被害者に踏ませることで、被害者が攻撃者のリソースに間違って侵入し、個人情報などを入力してしまうCSRFを防いでいる。
+
+    具体的には、被害者のstate CookieがRedirectURI中のstateと一致することがないため防ぐことができている。
+
+    stateはRequestURIに入ってはいるものの、HTTPSによって通信は保護されているので盗み見られることはない。
+
+- nonce：「その認可コードは本当に最新の自分のためのものか？」
+
+    Google Authorization ServerにURIパラメータとしてnonceを送った上で、そのnonceが含まれたOpenID(JWT)が返ってくる。このnonceを事前にセットしたnonce Cookieと一致するかどうかで、そのOpenIDが本当に自分のものであるかどうかを判定できる。
+
+    つまり、攻撃者が被害者のOpenIDを盗み取り、それを使ってログインしようとするReplay Attackを防いでいる。被害者のOpenIDに含まれるnonceと、攻撃者が持っているnonce Cookieが一致することがないからだ。
+
+    また、nonceは一度しか使われないため、過去の自らのOpenIDトークンを利用してしまうことも防いでいる。
+
+- SameSite=Lax: 異なるオリジンのサイトからのリクエストには、トップレベルナビゲーションでない限りCookieを付けない。
+
+    例えばある掲示板に `<img src="https://bank.com/transfer?amount=100M">` という悪質なタグがあったとする。
+
+    するとブラウザは画像読み込みのためにこのsrcをGETする。その際、ブラウザは勝手に `bank.com` のCookieをセットして送信してしまう。
+
+    それを防ぐのがSameSiteで、SameSite=Strictにしておけば異なるオリジンからのCookieをブラウザがセットすることはなくなる。
+
+    ただそうすると、例えばGoogleからXに飛ぶ時に、Cookieがないせいで毎回ログインするハメになるため、SameSite=Laxとすることで、トップレベルでの移動ではCookieをつけるのが現在の標準である。
+
+- HttpOnly: JavaScriptからはCookieの中身が見えないようにする。
+
+    前述したSameSiteは、同オリジンの中に悪意のあるスクリプトが存在する場合は対処できないという弱点を持つ。
+
+    それを半分解決するのがHttpOnlyで、例え同オリジンであっても、JSはそのCookieの中身を見ることができない。
+
+    それによってCookieの悪意あるプログラムへの流用を防いでいる。
+
+    ただし中身が見えなくてもCookieを利用するだけのスクリプトに対しては、CORS/CSPなどの対策が必要である。
+
+- Refresh Token: Access Token の再発行に使用。
+
+    たとえ盗まれても被害を最小限に抑えるため、Access Tokenの有効期間は短くしてある。
+
+    しかしその度にログインを要求してはUXが損なわれるため、Refresh Tokenを利用して自動でAccess Tokenを再発行する必要がある。
+
+    Access Tokenが不正だった際、サーバーはユーザーのRefresh Tokenを確認し、それをkeyとしてRedisからUserIDを取得する。
+
+    それを元にAccess Tokenを再発行することで、ユーザーは引き続きサービスを利用することができる。
+
+    DBではなくRedisを利用しているのは、{Refresh Token: userID} の関係は永続ではなく一時的であるからである。
+
+    ただし現在の実装ではRefresh Token Cookieは毎リクエストに含まれており、Access Tokenと盗まれる経路が同等になってしまっているため、Refresh Token用のAPIを用意するなどして必要な時のみ呼ぶ必要がある。
+    
+
+<!-- 追記例: state を入れた狙い／nonce と ID Token の組み合わせの狙い／HttpOnly と SameSite のトレードオフ／なぜ Redis に refresh を載せているか／OIDC verifier に ClientID を渡している意味／JWT と Cookie Max-Age の関係について -->
 
 ---
 
@@ -239,10 +288,37 @@ erDiagram
 
 ### データモデル・非正規化について（設計判断・自分用メモ）
 
-<!-- 追記例: likes を列ではなくテーブルにした理由／posts.username を持つ理由／部分一意インデックスの意図 -->
+- likes table の存在意義：誰がいいねしたか把握するため。
 
-（追記予定）
+    いいね機能の追加にあたって、likes tableの他にもう一案存在した。
 
+    それは「posts tableのカラムとしてlikeCountを追加する」というものである。
+
+    ただしこれは誰がいいねをしたか、また自分がいいねをしたかすら把握できなくなってしまう。
+
+    さらに、そこからいいね機能を実装しようとすれば、postsにlikedBy カラムなどの誰がいいねをしたかを把握する列を追加することになる。
+
+    その場合、一つのセルに複数ユーザーを詰め込んで1NF違反となるか、いいねをするたびにlikedByカラムのみが変わった行がどんどん増えて冗長となってしまう。
+
+    したがってこの案は却下され、現在の通りlikes tableを導入することになった。
+
+- posts.username の導入
+
+    各postに作成者のusernameを表示するためにはDB上では二つの方法が存在する。
+
+    一つはそのpostに紐つくuser_idを使って、users tableからusernameを引っ張ってくる方法。
+
+    正規化は保たれるが、全てのpostに対しクエリを打つ必要があるためパフォーマンスが低下する。
+
+    もう一つはposts tableにusernameカラムを追加する方法。
+
+    クエリ一回でusernameを取得できるが、{user_id, username}間の関数従属性により3NFが損なわれる。
+
+    今回はパフォーマンスと更新の煩雑さのトレードオフを考慮した結果、二つ目の方法を導入した。
+
+    理由としては、正規化を損なうことによる追加のクエリは「postを作る際のusernameの挿入」「usernameが変更された際、posts table 内のusernameの更新」にとどまる一方で、もし正規化を保てば一つ一つのpostに対してクエリを打つ必要があるからである。
+
+    ただし今気づいたがJOIN句を使えば正規化による問題を避けることができるので、その方向で後ほど実装し直す。
 ---
 
 ## 環境変数
@@ -287,8 +363,6 @@ Vite がプロキシ先に `backend` ホスト名を使っているため、**�
 ---
 
 ## 開発ログ・振り返り
-
-<!-- 迷った点・採用しなかった案・時間をかけた箇所 -->
 
 （追記予定）
 
