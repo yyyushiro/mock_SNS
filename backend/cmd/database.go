@@ -187,32 +187,30 @@ func GetFollowingPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context
 // LikePost increments likes with the check of no duplicates.
 func LikePost(likerId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) error {
 	// I'm not sure if I have to validate likerid and postid. I will do them later if needed.
-	_, err := pool.Exec(ctx, `SELECT user_id, post_id, created_at FROM likes WHERE user_id = $1 AND post_id = $2`, likerId, postId)
+	tag, err := pool.Exec(ctx, `SELECT 1 FROM likes WHERE user_id = $1 AND post_id = $2`, likerId, postId)
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			_, err := pool.Exec(ctx, `INSERT INTO likes (user_id, post_id) VALUES ($1, $2)`, likerId, postId)
-			if err != nil {
-				return fmt.Errorf("Scanned like: %w", err)
-			}
-			return nil
-		}
-		return fmt.Errorf("Scanned like: %w", err)
+		return fmt.Errorf("getting a like: %w", err)
 	}
-	return fmt.Errorf("User %d already liked post %d", likerId, postId)
+	if tag.RowsAffected() != 0 {
+		return fmt.Errorf("user %v already liked post %v", likerId, postId)
+	}
+
+	_, err = pool.Exec(ctx, `INSERT INTO likes (user_id, post_id) VALUES ($1, $2)`, likerId, postId)
+	if err != nil {
+		return fmt.Errorf("inserting a like: %w", err)
+	}
+	return nil
 }
 
 // UndoLikePost undos the likes.
 func UndoLikePost(likerId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) error {
-	_, err := pool.Exec(ctx, `SELECT user_id, post_id, created_at FROM likes WHERE user_id = $1 AND post_id = $2`, likerId, postId)
+	tag, err := pool.Exec(ctx, `DELETE FROM likes WHERE user_id = $1 AND post_id = $2`, likerId, postId)
 	if err != nil {
-		return fmt.Errorf("Scanned like: %w", err)
+		return fmt.Errorf("deleting a like: %w", err)
 	}
-
-	_, err = pool.Exec(ctx, `DELETE FROM likes WHERE user_id = $1 AND post_id = $2 RETURNING user_id, post_id, created_at`, likerId, postId)
-	if err != nil {
-		return fmt.Errorf("Deleted a like: %w", err)
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("user %v has not liked post %v", likerId, postId)
 	}
-
 	return nil
 }
 
