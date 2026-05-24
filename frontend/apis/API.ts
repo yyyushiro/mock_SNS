@@ -264,7 +264,7 @@ export async function getMyInfo(): Promise<MyUserInfo> {
 }
 
 export async function updateMyUsername(username: string): Promise<MyUserInfo> {
-    const response = await apiFetch("/api/user/me", {
+    const response = await apiFetch("/api/user/me/name", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username }),

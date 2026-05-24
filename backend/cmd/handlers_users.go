@@ -42,7 +42,6 @@ func userToOtherUserInfoResponse(u *User) OtherUserInfoResponse {
 	return OtherUserInfoResponse{ID: u.Id, Username: name, CreatedAt: u.CreatedAt}
 }
 
-
 func (a *App) FollowUserHandler(w http.ResponseWriter, r *http.Request) {
 	result, ok := AuthFromRequest(r)
 	if !ok {
@@ -110,7 +109,6 @@ func (a *App) GetMyInfoHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-
 
 	err = WriteJsonResponseBody(w, userToMyInfoResponse(user), http.StatusOK)
 	if err != nil {
@@ -193,6 +191,7 @@ func (a *App) PatchMyUsernameHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
+			log.Println(err)
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}

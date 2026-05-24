@@ -18,7 +18,7 @@ Google アカウントでのログイン、投稿・いいね・フォロー、�
 | Access Token Refresh | POST | `/api/auth/refresh` |
 | ログアウト | POST | `/api/auth/logout` |
 | 自分の情報取得 | GET | `/api/user/me` |
-| ユーザー名更新 | PATCH | `/api/user/me` |
+| ユーザー名更新 | PATCH | `/api/user/me/name` |
 | 自分の投稿一覧 | GET | `/api/user/me/posts` |
 | 自分のタイムライン（公開のみ） | GET | `/api/user/me/posts/public` |
 | 自分のタイムライン（フォロー） | GET | `/api/user/me/posts/following` |
