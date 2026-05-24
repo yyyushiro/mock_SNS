@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -26,8 +25,8 @@ func generateRefreshToken() (string, error) {
 	return base64.URLEncoding.EncodeToString(b), nil
 }
 
-// makeSignedAccessToken generates JWT with the given sub.
-func makeSignedAccessToken(sub uuid.UUID) (string, error) {
+// MakeSignedAccessToken generates JWT with the given sub.
+func MakeSignedAccessToken(sub uuid.UUID) (string, error) {
 	accessTokenDuration, err := strconv.Atoi(os.Getenv("ACCESS_TOKEN_DURATION"))
 	if err != nil {
 		return "", err
@@ -98,35 +97,9 @@ func AuthFromRequest(r *http.Request) (*AuthResult, bool) {
 // RequireAuth verifies the user's session via access or refresh token.
 func RequireAuth(r *http.Request, rdb *redis.Client) (*AuthResult, error) {
 	accessToken, err := GetAndVerifyCookie(r, "access_token")
+	// Access token is invalid, not found, or has some issue.
 	if err != nil {
-		// Check if the refresh token is present.
-		refreshToken, err := GetAndVerifyCookie(r, "refresh_token")
-		if err != nil {
-			return nil, fmt.Errorf("Verifying refresh token Cookie: %w", err)
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-		defer cancel()
-		subStr, err := rdb.Get(ctx, refreshToken).Result()
-		if err != nil {
-			return nil, fmt.Errorf("Getting sub from redis: %w", err)
-		}
-		log.Print(subStr)
-		subUuid, err := uuid.Parse(subStr)
-		if err != nil {
-			return nil, fmt.Errorf("Parsing sub into uuid: %w", err)
-		}
-
-		// found sub, so issue new access token. Access token is made from a sub.
-		newSignedAccessToken, err := makeSignedAccessToken(subUuid)
-		if err != nil {
-			return nil, fmt.Errorf("Making new access token: %w", err)
-		}
-
-		// return the new access token cookie.
-		return &AuthResult{
-			Sub:                  subUuid,
-			NewAccessTokenCookie: MakeSignedCookie("access_token", newSignedAccessToken, 900),
-		}, nil
+		return nil, fmt.Errorf("Verifying access token cookie: %w", err)
 	}
 	accessTokenClaims, err := verifyAccessTokenJWT(accessToken, []byte(os.Getenv("JWT_SECRET")))
 	if err != nil {

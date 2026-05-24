@@ -119,7 +119,7 @@ func (a *App) GetAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Avoid attacker's changing JWT.
-	signedAccessToken, err := makeSignedAccessToken(userId)
+	signedAccessToken, err := MakeSignedAccessToken(userId)
 	if err != nil {
 		log.Printf("making access token: %s", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -153,7 +153,7 @@ func (a *App) GetAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	refreshTokenCookie := MakeSignedCookie("refresh_token", refreshToken, 604800)
+	refreshTokenCookie := MakeSignedRefreshTokenCookie(refreshToken, refreshTokenDuration*3600)
 	http.SetCookie(w, refreshTokenCookie)
 
 	log.Printf("my access token: %s \n my refresh token: %s", signedAccessToken, refreshToken)
@@ -164,6 +164,50 @@ func (a *App) GetAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 		base = "http://localhost:5173"
 	}
 	http.Redirect(w, r, base+"/timeline", http.StatusFound)
+}
+
+func (a *App) RefreshTokenHandler(w http.ResponseWriter, r *http.Request) {
+	// get and verify the refresh token
+	refreshToken, err := GetAndVerifyCookie(r, "refresh_token")
+	if err != nil {
+		log.Printf("Getting and Verifying refresh token cookie: %s", err)
+		http.Error(w, "invalid session", http.StatusUnauthorized)
+		return
+	}
+	// verify the refresh token
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	subStr, err := a.Rdb.Get(ctx, refreshToken).Result()
+	if err != nil {
+		log.Printf("Getting userId from Redis: %s", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	subUuid, err := uuid.Parse(subStr)
+	if err != nil {
+		log.Printf("Converting type of userId into UUID: %s", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	newSignedAccessToken, err := MakeSignedAccessToken(subUuid)
+	if err != nil {
+		log.Printf("Making new access token: %s", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	accessTokenDuration, err := strconv.Atoi(os.Getenv("ACCESS_TOKEN_DURATION"))
+	if err != nil {
+		log.Printf("Getting access token duration: %s", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	newSignedAccessTokenCookie := MakeSignedCookie("access_token", newSignedAccessToken, accessTokenDuration)
+
+	http.SetCookie(w, newSignedAccessTokenCookie)
 }
 
 func (a *App) LogOutHandler(w http.ResponseWriter, r *http.Request) {
@@ -186,7 +230,7 @@ func (a *App) LogOutHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	refreshTokenDeleteCookie := MakeDeleteCookie("refresh_token")
+	refreshTokenDeleteCookie := MakeDeleteRefreshTokenCookie()
 	http.SetCookie(w, refreshTokenDeleteCookie)
 
 	w.WriteHeader(http.StatusNoContent)

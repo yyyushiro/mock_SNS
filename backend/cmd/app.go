@@ -89,6 +89,7 @@ func setUpOAuth2AndOIDC(ctx context.Context) (*oauth2.Config, *oidc.IDTokenVerif
 	return oauth2Conf, oidcVerifier, nil
 }
 
+// WithAuth wraps a handler and execute authentication, and give its result to the handler.
 func (a *App) WithAuth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		result, err := RequireAuth(r, a.Rdb)

@@ -41,6 +41,32 @@ func MakeSignedCookie(name, value string, maxAge int) *http.Cookie {
 	return SignCookie(&c)
 }
 
+func MakeSignedRefreshTokenCookie(value string, maxAge int) *http.Cookie {
+	c := http.Cookie{
+		Name:     "refresh_token",
+		Value:    value,
+		Path:     "/api/auth",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   cookieSecure(),
+		SameSite: http.SameSiteLaxMode,
+	}
+	return SignCookie(&c)
+}
+
+func MakeDeleteRefreshTokenCookie() *http.Cookie {
+	c := &http.Cookie{
+		Name:     "refresh_token",
+		Value:    "",
+		Path:     "/api/auth",
+		MaxAge:   -1, // setting negative number here deletes the cookie with the given name.
+		HttpOnly: true,
+		Secure:   cookieSecure(),
+		SameSite: http.SameSiteLaxMode,
+	}
+	return c
+}
+
 // MakeDeleteCookie deletes cookie with the given name.
 func MakeDeleteCookie(name string) *http.Cookie {
 	c := &http.Cookie{

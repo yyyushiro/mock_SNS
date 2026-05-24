@@ -15,6 +15,7 @@ Google アカウントでのログイン、投稿・いいね・フォロー、�
 |------|----------|------|
 | Google ログイン開始 | GET | `/api/auth/google/start` |
 | Google OAuth コールバック | GET | `/api/auth/callback/google` |
+| Access Token Refresh | POST | `/api/auth/refresh` |
 | ログアウト | POST | `/api/auth/logout` |
 | 自分の情報取得 | GET | `/api/user/me` |
 | ユーザー名更新 | PATCH | `/api/user/me` |
@@ -117,13 +118,15 @@ Google アカウントでのログイン、投稿・いいね・フォロー、�
 
    認証ミドルウェアとなる関数。`access_token` Cookie の存在・正当性を検証する。
 
-   もし Cookie が存在しなければ `refresh_token` Cookie を確認し、それをキーとして Redis から値である `userId` を得ることで `access_token` を再発行する。
+6. **`POST /api/auth/refresh`**
 
-6. **ログアウト**：`access_token` / `refresh_token` Cookie を削除し、Redis のリフレッシュキーを `DEL`。
+    Access Token の再発行用のEndpoint. Access Tokenが存在しない場合にフロントエンドから呼ばれる。Refresh Tokenが有効ならAccess Tokenが再発行させる。
 
-7. **Cookie の共通属性**：`HttpOnly: true`、`SameSite: Lax`、`Secure` はデプロイ時 `true`。値は名前と値から HMAC（`HMAC_SECRET_KEY`）した署名付き。
+7. **ログアウト**：`access_token` / `refresh_token` Cookie を削除し、Redis のリフレッシュキーを `DEL`。
 
-8. **OAuth のスコープ**：`openid` のみ。
+8. **Cookie の共通属性**：`HttpOnly: true`、`SameSite: Lax`、`Secure` はデプロイ時 `true`。値は名前と値から HMAC（`HMAC_SECRET_KEY`）した署名付き。
+
+9. **OAuth のスコープ**：`openid` のみ。
 
 ### 認証・Cookie・セッションについて（設計判断・自分用メモ）
 
@@ -176,6 +179,18 @@ Google アカウントでのログイン、投稿・いいね・フォロー、�
     DBではなくRedisを利用しているのは、{Refresh Token: userID} の関係は永続ではなく一時的であるからである。
 
     ただし現在の実装ではRefresh Token Cookieは毎リクエストに含まれており、Access Tokenと盗まれる経路が同等になってしまっているため、Refresh Token用のAPIを用意するなどして必要な時のみ呼ぶ必要がある。
+
+
+- Access Token再発行について。
+
+    上記の問題を解決するために、Refresh Token用のAPIを用意した。 パスは`POST /api/auth/refresh`。
+
+    これで普段のリクエストにはRefresh Tokenが含まれることはなくなる。
+
+    ただし、懸念点としては、Refresh Token Cookie のPath属性が `api/auth/refresh`ではなく`api/auth`になっていることである。これは`api/auth/callback/google`においてCookieを作成したため、`api/auth/refresh`と設定することが不可能だったためである。
+
+    従ってauth系のAPIには全てRefresh Token Cookieがついて回ることとなる。現状はログイン・ログアウトのためのAPIしかauth系列には存在しないから特に問題ないが、後々増えてきた場合には、`api/auth/refresh`をPath属性とできるような実装を施す必要性がある。
+
     
 
 <!-- 追記例: state を入れた狙い／nonce と ID Token の組み合わせの狙い／HttpOnly と SameSite のトレードオフ／なぜ Redis に refresh を載せているか／OIDC verifier に ClientID を渡している意味／JWT と Cookie Max-Age の関係について -->

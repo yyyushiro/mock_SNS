@@ -35,10 +35,70 @@ function postsFromJson(data: unknown): Post[] {
     return data.map((item) => postRowFromJson(item as PostWire))
 }
 
+const REFRESH_URL = "/api/auth/refresh"
+
+function requestUrl(input: RequestInfo | URL): string {
+    if (typeof input === "string") return input
+    if (input instanceof URL) return `${input.pathname}${input.search}`
+    return input.url
+}
+
+function skipsRefreshRetry(url: string): boolean {
+    return (
+        url.includes("/api/auth/refresh") || url.includes("/api/auth/logout")
+    )
+}
+
+function redirectToLogin(): void {
+    window.location.href = "/"
+}
+
+let refreshInFlight: Promise<boolean> | null = null
+
+async function refreshSession(): Promise<boolean> {
+    if (refreshInFlight) return refreshInFlight
+    refreshInFlight = (async () => {
+        const res = await fetch(REFRESH_URL, {
+            method: "POST",
+            credentials: "include",
+        })
+        return res.ok
+    })()
+    try {
+        return await refreshInFlight
+    } finally {
+        refreshInFlight = null
+    }
+}
+
+async function apiFetch(
+    input: RequestInfo | URL,
+    init?: RequestInit,
+): Promise<Response> {
+    const mergedInit: RequestInit = { ...init, credentials: "include" }
+    let response = await fetch(input, mergedInit)
+
+    if (response.status !== 401 || skipsRefreshRetry(requestUrl(input))) {
+        return response
+    }
+
+    const refreshed = await refreshSession()
+    if (!refreshed) {
+        redirectToLogin()
+        throw new Error(`Response status: ${response.status}`)
+    }
+
+    response = await fetch(input, mergedInit)
+    if (response.status === 401) {
+        redirectToLogin()
+        throw new Error(`Response status: ${response.status}`)
+    }
+    return response
+}
+
 export async function getMyPosts(): Promise<Post[]> {
-    const response = await fetch("/api/user/me/posts", {
+    const response = await apiFetch("/api/user/me/posts", {
         method: "GET",
-        credentials: "include",
     })
     if (!response.ok) {
         throw new Error(`Response status: ${response.status}`)
@@ -52,9 +112,8 @@ export async function getMyPosts(): Promise<Post[]> {
 }
 
 export async function getPublicPosts(): Promise<Post[]> {
-    const response = await fetch("/api/user/me/posts/public", {
+    const response = await apiFetch("/api/user/me/posts/public", {
         method: "GET",
-        credentials: "include",
     })
     if (!response.ok) {
         throw new Error(`Response status: ${response.status}`)
@@ -68,9 +127,8 @@ export async function getPublicPosts(): Promise<Post[]> {
 }
 
 export async function getFollowingPosts(): Promise<Post[]> {
-    const response = await fetch("/api/user/me/posts/following", {
+    const response = await apiFetch("/api/user/me/posts/following", {
         method: "GET",
-        credentials: "include",
     })
     if (!response.ok) {
         throw new Error(`Response status: ${response.status}`)
@@ -84,11 +142,10 @@ export async function getFollowingPosts(): Promise<Post[]> {
 }
 
 export async function followUser(userId: string): Promise<void> {
-    const response = await fetch(
+    const response = await apiFetch(
         `/api/user/${encodeURIComponent(userId)}/follow`,
         {
             method: "POST",
-            credentials: "include",
         },
     )
     if (!response.ok) {
@@ -97,11 +154,10 @@ export async function followUser(userId: string): Promise<void> {
 }
 
 export async function unfollowUser(userId: string): Promise<void> {
-    const response = await fetch(
+    const response = await apiFetch(
         `/api/user/${encodeURIComponent(userId)}/follow`,
         {
             method: "DELETE",
-            credentials: "include",
         },
     )
     if (!response.ok) {
@@ -110,9 +166,8 @@ export async function unfollowUser(userId: string): Promise<void> {
 }
 
 export async function makePost(body: string): Promise<Post> {
-    const response = await fetch("/api/posts", {
+    const response = await apiFetch("/api/posts", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ body }),
     })
@@ -128,11 +183,10 @@ export async function makePost(body: string): Promise<Post> {
 }
 
 export async function likePost(postId: string): Promise<void> {
-    const response = await fetch(
+    const response = await apiFetch(
         `/api/posts/${encodeURIComponent(postId)}/likes`,
         {
             method: "POST",
-            credentials: "include",
         },
     )
     if (!response.ok) {
@@ -141,11 +195,10 @@ export async function likePost(postId: string): Promise<void> {
 }
 
 export async function unlikePost(postId: string): Promise<void> {
-    const response = await fetch(
+    const response = await apiFetch(
         `/api/posts/${encodeURIComponent(postId)}/likes`,
         {
             method: "DELETE",
-            credentials: "include",
         },
     )
     if (!response.ok) {
@@ -154,11 +207,10 @@ export async function unlikePost(postId: string): Promise<void> {
 }
 
 export async function deletePost(postId: string): Promise<void> {
-    const response = await fetch(
+    const response = await apiFetch(
         `/api/posts/${encodeURIComponent(postId)}`,
         {
             method: "DELETE",
-            credentials: "include",
         },
     )
     if (!response.ok) {
@@ -197,9 +249,8 @@ function myUserInfoFromJson(row: MyUserInfoWire): MyUserInfo {
 }
 
 export async function getMyInfo(): Promise<MyUserInfo> {
-    const response = await fetch("/api/user/me", {
+    const response = await apiFetch("/api/user/me", {
         method: "GET",
-        credentials: "include",
     })
     if (!response.ok) {
         throw new Error(`Response status: ${response.status}`)
@@ -213,9 +264,8 @@ export async function getMyInfo(): Promise<MyUserInfo> {
 }
 
 export async function updateMyUsername(username: string): Promise<MyUserInfo> {
-    const response = await fetch("/api/user/me", {
+    const response = await apiFetch("/api/user/me", {
         method: "PATCH",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username }),
     })
