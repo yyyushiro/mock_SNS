@@ -261,12 +261,9 @@ func UpdateMyUsername(userID uuid.UUID, username string, pool *pgxpool.Pool, ctx
 		return fmt.Errorf("updating username in users table: %w", pgx.ErrNoRows)
 	}
 
-	tag, err = pool.Exec(ctx, `UPDATE posts SET username = $1 WHERE user_id = $2`, username, userID)
+	_, err = pool.Exec(ctx, `UPDATE posts SET username = $1 WHERE user_id = $2`, username, userID)
 	if err != nil {
 		return fmt.Errorf("updating username in posts table: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("updating username in posts table: %w", pgx.ErrNoRows)
 	}
 	return nil
 }
