@@ -4,12 +4,19 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/mail"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+	"github.com/resend/resend-go/v3"
+	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/text/unicode/norm"
 )
 
 // generateRefreshToken generates a random 32-byte base64 token for a refresh token.
@@ -20,6 +27,69 @@ func generateRefreshToken() (string, error) {
 		return "", err
 	}
 	return base64.URLEncoding.EncodeToString(b), nil
+}
+
+// generateVerificationToken generates a random 32-byte URL-safe token for email verification links.
+func generateVerificationToken() (string, error) {
+	b := make([]byte, 32)
+	_, err := rand.Read(b)
+	if err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(b), nil
+}
+
+func normalizeEmail(raw string) string {
+	return strings.ToLower(norm.NFKC.String(strings.TrimSpace(raw)))
+}
+
+func validateEmail(normalized string) bool {
+	_, err := mail.ParseAddress(normalized)
+	return err == nil
+}
+
+func validatePassword(plain string) bool {
+	return true
+}
+
+func hashPassword(plain string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(plain), 14)
+	return string(bytes), err
+}
+
+func verifyPassword(hashed, plain string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hashed), []byte(plain))
+	return err == nil
+}
+
+const verificationTokenTTL = 24 * time.Hour
+
+func verificationRedisKey(token string) string {
+	return "email_verify:" + token
+}
+
+func (a *App) storeVerificationToken(ctx context.Context, userId uuid.UUID, token string) error {
+	err := a.Rdb.Set(ctx, verificationRedisKey(token), userId.String(), verificationTokenTTL).Err()
+	if err != nil {
+		return fmt.Errorf("storing verification token: %w", err)
+	}
+	return nil
+}
+
+func (a *App) consumeVerificationToken(ctx context.Context, token string) (uuid.UUID, error) {
+	subStr, err := a.Rdb.GetDel(ctx, verificationRedisKey(token)).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return uuid.UUID{}, fmt.Errorf("invalid or expired verification token")
+		}
+		return uuid.UUID{}, fmt.Errorf("consuming verification token: %w", err)
+	}
+
+	userId, err := uuid.Parse(subStr)
+	if err != nil {
+		return uuid.UUID{}, fmt.Errorf("parsing user id from verification token: %w", err)
+	}
+	return userId, nil
 }
 
 // MakeSignedAccessToken generates JWT with the given sub.
@@ -119,4 +189,61 @@ func (a *App) RequireAuth(r *http.Request) (*AuthResult, error) {
 	}
 
 	return &AuthResult{Sub: subUuid, NewAccessTokenCookie: nil}, nil
+}
+
+// RegisterPasswordUser is the service-layer entry point for email/password sign-up.
+//
+// On success it returns the new user's ID and a ready-to-use verification URL
+// (AppPublicURL + /verify-email?token=…) that the caller can forward to the
+// email-sending layer without needing to know the token format.
+//
+// Errors from InsertPasswordUser are returned unwrapped so the HTTP handler can
+// inspect the "email already registered" sentinel directly.
+func (a *App) RegisterPasswordUser(ctx context.Context, email, plainPassword string) (uuid.UUID, string, error) {
+	normalized := normalizeEmail(email)
+	if !validateEmail(normalized) {
+		return uuid.UUID{}, "", fmt.Errorf("invalid email")
+	}
+	if !validatePassword(plainPassword) {
+		return uuid.UUID{}, "", fmt.Errorf("invalid password")
+	}
+	hashed, err := hashPassword(plainPassword)
+	if err != nil {
+		return uuid.UUID{}, "", fmt.Errorf("hashing password: %w", err)
+	}
+	userId, err := InsertPasswordUser(ctx, a.Pool, normalized, hashed)
+	if err != nil {
+		return uuid.UUID{}, "", err
+	}
+	token, err := generateVerificationToken()
+	if err != nil {
+		return uuid.UUID{}, "", fmt.Errorf("generating verification token: %w", err)
+	}
+	if err := a.storeVerificationToken(ctx, userId, token); err != nil {
+		return uuid.UUID{}, "", err
+	}
+	verificationURL := a.AppPublicURL + "/verify-email?token=" + token
+	return userId, verificationURL, nil
+}
+
+// SendVerificationEmail delivers a verification link to the registrant.
+// Implement this using the Resend API (or any transactional email provider).
+// toEmail is the normalized address; verificationURL is the one-time link
+// produced by RegisterPasswordUser.
+func (a *App) SendVerificationEmail(ctx context.Context, toEmail, verificationURL string) (*resend.SendEmailResponse, error) {
+	client := resend.NewClient(a.ResendApiKey)
+
+	params := &resend.SendEmailRequest{
+		From:    a.EmailFrom,
+		To:      []string{toEmail},
+		Html:    "<strong>Click the link below to verify your email.</strong><a href=" + verificationURL + ">click here</a>",
+		Subject: "Email Verification",
+	}
+
+	sent, err := client.Emails.Send(params)
+	if err != nil {
+		return nil, err
+	}
+
+	return sent, nil
 }

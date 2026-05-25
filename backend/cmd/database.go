@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -266,4 +268,28 @@ func UpdateMyUsername(userID uuid.UUID, username string, pool *pgxpool.Pool, ctx
 		return fmt.Errorf("updating username in posts table: %w", err)
 	}
 	return nil
+}
+
+// InsertPasswordUser creates a new user row with the given normalized email and
+// bcrypt-hashed password. It returns the generated UUID on success.
+//
+// The caller is responsible for normalizing the email before passing it here;
+// the unique index on LOWER(email) enforces uniqueness at the DB level.
+// A PostgreSQL unique-violation (23505) is surfaced as a sentinel error so the
+// HTTP layer can return 409 without logging a full stack trace.
+func InsertPasswordUser(ctx context.Context, pool *pgxpool.Pool, email, hashedPassword string) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := pool.QueryRow(ctx,
+		`INSERT INTO users (email, hashed_password) VALUES ($1, $2) RETURNING id`,
+		email, hashedPassword,
+	).Scan(&id)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		// 23505 = unique_violation; the LOWER(email) index was hit.
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return uuid.UUID{}, fmt.Errorf("email already registered")
+		}
+		return uuid.UUID{}, fmt.Errorf("inserting password user: %w", err)
+	}
+	return id, nil
 }

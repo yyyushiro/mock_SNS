@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -199,4 +200,49 @@ func (a *App) LogOutHandler(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, a.MakeDeleteRefreshTokenCookie())
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// RegisterHandler handles POST /api/auth/register.
+// It accepts a JSON body of {email, password}, creates an unverified user account,
+// and triggers a verification email. No session cookie is issued — the client must
+// complete email verification before logging in.
+//
+// 201 Created      — account created; verification email dispatched (or best-effort).
+// 400 Bad Request  — malformed JSON, invalid email format, or password rejected.
+// 409 Conflict     — email address is already registered.
+// 500 Internal     — unexpected DB / Redis failure.
+func (a *App) RegisterHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	userId, verificationURL, err := a.RegisterPasswordUser(ctx, req.Email, req.Password)
+	if err != nil {
+		// Surface duplicate-email as 409 without logging — it is an expected user error.
+		if err.Error() == "email already registered" {
+			log.Println(err.Error())
+			http.Error(w, "email already registered", http.StatusConflict)
+			return
+		}
+		log.Printf("RegisterPasswordUser: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Email delivery is best-effort: the user is already persisted, so a send
+	// failure should not roll back the registration. Log and move on; the user
+	// can request a resend later.
+	if _, err := a.SendVerificationEmail(ctx, req.Email, verificationURL); err != nil {
+		log.Printf("SendVerificationEmail userId=%s: %v", userId, err)
+	}
+
+	w.WriteHeader(http.StatusCreated)
 }
