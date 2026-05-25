@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -29,11 +30,37 @@ func main() {
 		log.Fatalf("failed to configure OAuth2 and OIDC: %v", err)
 	}
 
+	accessTokenDuration, err := strconv.Atoi(os.Getenv("ACCESS_TOKEN_DURATION"))
+	if err != nil {
+		log.Fatalf("invalid ACCESS_TOKEN_DURATION: %v", err)
+	}
+
+	refreshTokenDuration, err := strconv.Atoi(os.Getenv("REFRESH_TOKEN_DURATION"))
+	if err != nil {
+		log.Fatalf("invalid REFRESH_TOKEN_DURATION: %v", err)
+	}
+
+	cookieSecure := func() bool {
+		v := strings.ToLower(strings.TrimSpace(os.Getenv("COOKIE_SECURE")))
+		return v == "true" || v == "1"
+	}()
+
+	appPublicURL := strings.TrimSuffix(strings.TrimSpace(os.Getenv("APP_PUBLIC_URL")), "/")
+	if appPublicURL == "" {
+		appPublicURL = "http://localhost:5173"
+	}
+
 	app := &App{
-		Pool:         pool,
-		Rdb:          rdb,
-		OAuth2Conf:   oauth2Config,
-		OIDCVerifier: oidcVerifier,
+		Pool:                 pool,
+		Rdb:                  rdb,
+		OAuth2Conf:           oauth2Config,
+		OIDCVerifier:         oidcVerifier,
+		JWTSecret:            []byte(os.Getenv("JWT_SECRET")),
+		HMACSecretKey:        []byte(os.Getenv("HMAC_SECRET_KEY")),
+		CookieSecure:         cookieSecure,
+		AccessTokenDuration:  accessTokenDuration,
+		RefreshTokenDuration: refreshTokenDuration,
+		AppPublicURL:         appPublicURL,
 	}
 
 	mux := http.NewServeMux()

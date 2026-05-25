@@ -16,10 +16,16 @@ import (
 
 // App struct holds all dependent variables.
 type App struct {
-	Pool         *pgxpool.Pool
-	Rdb          *redis.Client
-	OAuth2Conf   *oauth2.Config
-	OIDCVerifier *oidc.IDTokenVerifier
+	Pool                 *pgxpool.Pool
+	Rdb                  *redis.Client
+	OAuth2Conf           *oauth2.Config
+	OIDCVerifier         *oidc.IDTokenVerifier
+	JWTSecret            []byte
+	HMACSecretKey        []byte
+	CookieSecure         bool
+	AccessTokenDuration  int // minutes
+	RefreshTokenDuration int // hours
+	AppPublicURL         string
 }
 
 func connectDB() (*pgxpool.Pool, error) {
@@ -92,7 +98,7 @@ func setUpOAuth2AndOIDC(ctx context.Context) (*oauth2.Config, *oidc.IDTokenVerif
 // WithAuth wraps a handler and execute authentication, and give its result to the handler.
 func (a *App) WithAuth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		result, err := RequireAuth(r, a.Rdb)
+		result, err := a.RequireAuth(r)
 		if err != nil {
 			log.Printf("Authorization: %s", err)
 			http.Error(w, "invalid session", http.StatusUnauthorized)
