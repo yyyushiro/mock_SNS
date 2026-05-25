@@ -7,18 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"strings"
 )
 
-func cookieSecure() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("COOKIE_SECURE")))
-	return v == "true" || v == "1"
-}
-
 // SignCookie sets a signature on a given Cookie using HMAC.
-func SignCookie(c *http.Cookie) *http.Cookie {
-	mac := hmac.New(sha256.New, []byte(os.Getenv("HMAC_SECRET_KEY")))
+func (a *App) SignCookie(c *http.Cookie) *http.Cookie {
+	mac := hmac.New(sha256.New, a.HMACSecretKey)
 	mac.Write([]byte(c.Name))
 	mac.Write([]byte(c.Value))
 	signature := mac.Sum(nil)
@@ -28,61 +21,61 @@ func SignCookie(c *http.Cookie) *http.Cookie {
 }
 
 // MakeSignedCookie makes a HMAC-signed cookie with the given name, value, and maxAge.
-func MakeSignedCookie(name, value string, maxAge int) *http.Cookie {
+func (a *App) MakeSignedCookie(name, value string, maxAge int) *http.Cookie {
 	c := http.Cookie{
 		Name:     name,
 		Value:    value,
 		Path:     "/",
 		MaxAge:   maxAge,
 		HttpOnly: true,
-		Secure:   cookieSecure(),
+		Secure:   a.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 	}
-	return SignCookie(&c)
+	return a.SignCookie(&c)
 }
 
-func MakeSignedRefreshTokenCookie(value string, maxAge int) *http.Cookie {
+func (a *App) MakeSignedRefreshTokenCookie(value string, maxAge int) *http.Cookie {
 	c := http.Cookie{
 		Name:     "refresh_token",
 		Value:    value,
 		Path:     "/api/auth/refresh",
 		MaxAge:   maxAge,
 		HttpOnly: true,
-		Secure:   cookieSecure(),
+		Secure:   a.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 	}
-	return SignCookie(&c)
+	return a.SignCookie(&c)
 }
 
-func MakeDeleteRefreshTokenCookie() *http.Cookie {
+func (a *App) MakeDeleteRefreshTokenCookie() *http.Cookie {
 	c := &http.Cookie{
 		Name:     "refresh_token",
 		Value:    "",
 		Path:     "/api/auth/refresh",
 		MaxAge:   -1, // setting negative number here deletes the cookie with the given name.
 		HttpOnly: true,
-		Secure:   cookieSecure(),
+		Secure:   a.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 	}
 	return c
 }
 
 // MakeDeleteCookie deletes cookie with the given name.
-func MakeDeleteCookie(name string) *http.Cookie {
+func (a *App) MakeDeleteCookie(name string) *http.Cookie {
 	c := &http.Cookie{
 		Name:     name,
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1, // setting negative number here deletes the cookie with the given name.
 		HttpOnly: true,
-		Secure:   cookieSecure(),
+		Secure:   a.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 	}
 	return c
 }
 
 // GetAndVerifyCookie verifies the given name's Cookie and return its decoded value.
-func GetAndVerifyCookie(r *http.Request, name string) (string, error) {
+func (a *App) GetAndVerifyCookie(r *http.Request, name string) (string, error) {
 	signedCookie, err := r.Cookie(name)
 	if err != nil {
 		return "", err
@@ -95,7 +88,7 @@ func GetAndVerifyCookie(r *http.Request, name string) (string, error) {
 	}
 	value := signedCookie.Value[hexSize:]
 
-	mac := hmac.New(sha256.New, []byte(os.Getenv("HMAC_SECRET_KEY")))
+	mac := hmac.New(sha256.New, a.HMACSecretKey)
 	mac.Write([]byte(signedCookie.Name))
 	mac.Write([]byte(value))
 	expectedSignature := mac.Sum(nil)

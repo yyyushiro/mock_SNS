@@ -6,13 +6,10 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 )
 
 // generateRefreshToken generates a random 32-byte base64 token for a refresh token.
@@ -26,13 +23,8 @@ func generateRefreshToken() (string, error) {
 }
 
 // MakeSignedAccessToken generates JWT with the given sub.
-func MakeSignedAccessToken(sub uuid.UUID) (string, error) {
-	accessTokenDuration, err := strconv.Atoi(os.Getenv("ACCESS_TOKEN_DURATION"))
-	if err != nil {
-		return "", err
-	}
-
-	exp := time.Now().Add(time.Duration(accessTokenDuration) * time.Minute)
+func (a *App) MakeSignedAccessToken(sub uuid.UUID) (string, error) {
+	exp := time.Now().Add(time.Duration(a.AccessTokenDuration) * time.Minute)
 	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256,
 		jwt.MapClaims{
 			"sub": sub,
@@ -40,7 +32,7 @@ func MakeSignedAccessToken(sub uuid.UUID) (string, error) {
 			"iat": time.Now().Unix(),
 		})
 
-	signedAccessToken, err := accessToken.SignedString([]byte(os.Getenv("JWT_SECRET")))
+	signedAccessToken, err := accessToken.SignedString(a.JWTSecret)
 	if err != nil {
 		return "", err
 	}
@@ -53,13 +45,13 @@ type accessTokenClaims struct {
 }
 
 // verifyAccessTokenJWT verifies the given JWT and decode it.
-func verifyAccessTokenJWT(tokenString string, secret []byte) (*accessTokenClaims, error) {
+func (a *App) verifyAccessTokenJWT(tokenString string) (*accessTokenClaims, error) {
 	var claims accessTokenClaims
 	tok, err := jwt.ParseWithClaims(tokenString, &claims, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected alg: %v", t.Header["alg"])
 		}
-		return secret, nil
+		return a.JWTSecret, nil
 	})
 	if err != nil {
 		return nil, err
@@ -95,38 +87,33 @@ func AuthFromRequest(r *http.Request) (*AuthResult, bool) {
 }
 
 // InitRefreshToken creates a refresh token and store it into Redis.
-func InitRefreshToken(userId uuid.UUID, rdb *redis.Client, ctx context.Context) (string, int, error) {
+func (a *App) InitRefreshToken(userId uuid.UUID, ctx context.Context) (string, int, error) {
 	refreshToken, err := generateRefreshToken()
 	if err != nil {
 		return "", 0, err
 	}
 
-	refreshTokenDuration, err := strconv.Atoi(os.Getenv("REFRESH_TOKEN_DURATION"))
-	if err != nil {
-		return "", 0, err
-	}
-
-	err = rdb.Set(ctx, refreshToken, userId.String(), time.Duration(refreshTokenDuration)*time.Hour).Err()
+	err = a.Rdb.Set(ctx, refreshToken, userId.String(), time.Duration(a.RefreshTokenDuration)*time.Hour).Err()
 	if err != nil {
 		return "", 0, fmt.Errorf("Setting refresh token: %w", err)
 	}
 
-	return refreshToken, refreshTokenDuration, nil
+	return refreshToken, a.RefreshTokenDuration, nil
 }
 
 // RequireAuth verifies the user's session via access or refresh token.
-func RequireAuth(r *http.Request, rdb *redis.Client) (*AuthResult, error) {
-	accessToken, err := GetAndVerifyCookie(r, "access_token")
+func (a *App) RequireAuth(r *http.Request) (*AuthResult, error) {
+	accessToken, err := a.GetAndVerifyCookie(r, "access_token")
 	// Access token is invalid, not found, or has some issue.
 	if err != nil {
 		return nil, fmt.Errorf("Verifying access token cookie: %w", err)
 	}
-	accessTokenClaims, err := verifyAccessTokenJWT(accessToken, []byte(os.Getenv("JWT_SECRET")))
+	claims, err := a.verifyAccessTokenJWT(accessToken)
 	if err != nil {
 		return nil, fmt.Errorf("Verifying access token JWT: %w", err)
 	}
 
-	subUuid, err := uuid.Parse(accessTokenClaims.Sub)
+	subUuid, err := uuid.Parse(claims.Sub)
 	if err != nil {
 		return nil, fmt.Errorf("parsing string into uuid: %w", err)
 	}

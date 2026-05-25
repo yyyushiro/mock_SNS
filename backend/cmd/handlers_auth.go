@@ -6,9 +6,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"os"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,10 +19,12 @@ func (a *App) AuthenticationURIHandler(w http.ResponseWriter, r *http.Request) {
 	nonce := rand.Text()
 
 	// Set state and nonce cookies to check validity of the access token and OpenID later.
-	http.SetCookie(w, MakeSignedCookie("state", state, 300))
-	http.SetCookie(w, MakeSignedCookie("nonce", nonce, 300))
+	http.SetCookie(w, a.MakeSignedCookie("state", state, 300))
+	http.SetCookie(w, a.MakeSignedCookie("nonce", nonce, 300))
 
-	oauthURL := a.OAuth2Conf.AuthCodeURL(state, oauth2.SetAuthURLParam("nonce", nonce), oauth2.SetAuthURLParam("redirect_uri", os.Getenv("REDIRECT_URI")))
+	oauthURL := a.OAuth2Conf.AuthCodeURL(state,
+		oauth2.SetAuthURLParam("nonce", nonce),
+		oauth2.SetAuthURLParam("redirect_uri", a.OAuth2Conf.RedirectURL))
 	http.Redirect(w, r, oauthURL, http.StatusFound)
 }
 
@@ -34,7 +33,7 @@ func (a *App) GetAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	stateValue, err := GetAndVerifyCookie(r, "state")
+	stateValue, err := a.GetAndVerifyCookie(r, "state")
 	if err != nil {
 		if errors.Is(err, http.ErrNoCookie) {
 			log.Printf("retrieve cookie: %v", err)
@@ -52,8 +51,7 @@ func (a *App) GetAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Makes sure this state is not reused by attackers.
-	stateDeleteCookie := MakeDeleteCookie("state")
-	http.SetCookie(w, stateDeleteCookie)
+	http.SetCookie(w, a.MakeDeleteCookie("state"))
 
 	tok, err := a.OAuth2Conf.Exchange(ctx, r.URL.Query().Get("code"))
 	if err != nil {
@@ -85,7 +83,7 @@ func (a *App) GetAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nonceValue, err := GetAndVerifyCookie(r, "nonce")
+	nonceValue, err := a.GetAndVerifyCookie(r, "nonce")
 	if err != nil {
 		if errors.Is(err, http.ErrNoCookie) {
 			log.Printf("retrieve cookie: %v", err)
@@ -104,8 +102,7 @@ func (a *App) GetAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Make sure the attackers send the app OpneID token with the same nonce and it passes.
-	nonceDeleteCookie := MakeDeleteCookie("nonce")
-	http.SetCookie(w, nonceDeleteCookie)
+	http.SetCookie(w, a.MakeDeleteCookie("nonce"))
 
 	sub := claims.Sub
 
@@ -121,7 +118,7 @@ func (a *App) GetAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Avoid attacker's changing JWT.
-	signedAccessToken, err := MakeSignedAccessToken(userId)
+	signedAccessToken, err := a.MakeSignedAccessToken(userId)
 	if err != nil {
 		log.Printf("making access token: %s", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -129,32 +126,25 @@ func (a *App) GetAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Signed Cookie prevents attacker's changing Cookie.
-	accessTokenCookie := MakeSignedCookie("access_token", signedAccessToken, 900)
-	http.SetCookie(w, accessTokenCookie)
+	http.SetCookie(w, a.MakeSignedCookie("access_token", signedAccessToken, a.AccessTokenDuration*60))
 
-	refreshToken, refreshTokenDuration, err := InitRefreshToken(userId, a.Rdb, ctx)
+	refreshToken, refreshTokenDuration, err := a.InitRefreshToken(userId, ctx)
 	if err != nil {
 		log.Println(err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	refreshTokenCookie := MakeSignedRefreshTokenCookie(refreshToken, refreshTokenDuration*3600)
-	http.SetCookie(w, refreshTokenCookie)
+	http.SetCookie(w, a.MakeSignedRefreshTokenCookie(refreshToken, refreshTokenDuration*3600))
 
 	log.Printf("my access token: %s \n my refresh token: %s", signedAccessToken, refreshToken)
 
-	base := strings.TrimSpace(os.Getenv("APP_PUBLIC_URL"))
-	base = strings.TrimSuffix(base, "/")
-	if base == "" {
-		base = "http://localhost:5173"
-	}
-	http.Redirect(w, r, base+"/timeline", http.StatusFound)
+	http.Redirect(w, r, a.AppPublicURL+"/timeline", http.StatusFound)
 }
 
 func (a *App) RefreshTokenHandler(w http.ResponseWriter, r *http.Request) {
 	// get and verify the refresh token
-	refreshToken, err := GetAndVerifyCookie(r, "refresh_token")
+	refreshToken, err := a.GetAndVerifyCookie(r, "refresh_token")
 	if err != nil {
 		log.Printf("Getting and Verifying refresh token cookie: %s", err)
 		http.Error(w, "invalid session", http.StatusUnauthorized)
@@ -177,30 +167,20 @@ func (a *App) RefreshTokenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newSignedAccessToken, err := MakeSignedAccessToken(subUuid)
+	newSignedAccessToken, err := a.MakeSignedAccessToken(subUuid)
 	if err != nil {
 		log.Printf("Making new access token: %s", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	accessTokenDuration, err := strconv.Atoi(os.Getenv("ACCESS_TOKEN_DURATION"))
-	if err != nil {
-		log.Printf("Getting access token duration: %s", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	newSignedAccessTokenCookie := MakeSignedCookie("access_token", newSignedAccessToken, accessTokenDuration)
-
-	http.SetCookie(w, newSignedAccessTokenCookie)
+	http.SetCookie(w, a.MakeSignedCookie("access_token", newSignedAccessToken, a.AccessTokenDuration*60))
 }
 
 func (a *App) LogOutHandler(w http.ResponseWriter, r *http.Request) {
-	accessTokenDeleteCookie := MakeDeleteCookie("access_token")
-	http.SetCookie(w, accessTokenDeleteCookie)
+	http.SetCookie(w, a.MakeDeleteCookie("access_token"))
 
-	refreshToken, err := GetAndVerifyCookie(r, "refresh_token")
+	refreshToken, err := a.GetAndVerifyCookie(r, "refresh_token")
 	if err != nil {
 		log.Printf("Getting refresh token: %s", err)
 		http.Error(w, "invalid session", http.StatusUnauthorized)
@@ -216,8 +196,7 @@ func (a *App) LogOutHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	refreshTokenDeleteCookie := MakeDeleteRefreshTokenCookie()
-	http.SetCookie(w, refreshTokenDeleteCookie)
+	http.SetCookie(w, a.MakeDeleteRefreshTokenCookie())
 
 	w.WriteHeader(http.StatusNoContent)
 }
