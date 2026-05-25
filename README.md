@@ -187,9 +187,11 @@ Google アカウントでのログイン、投稿・いいね・フォロー、�
 
     これで普段のリクエストにはRefresh Tokenが含まれることはなくなる。
 
-    ただし、懸念点としては、Refresh Token Cookie のPath属性が `api/auth/refresh`ではなく`api/auth`になっていることである。これは`api/auth/callback/google`においてCookieを作成したため、`api/auth/refresh`と設定することが不可能だったためである。
+    **Refresh Token の発行タイミング**：OAuth callback（`GET /api/auth/callback/google`）でのみ行う。`POST /api/auth/refresh` は **Refresh Token → Access Token の再発行だけ**を担当し、Access Token から Refresh Token を新規発行してはならない。
 
-    従ってauth系のAPIには全てRefresh Token Cookieがついて回ることとなる。現状はログイン・ログアウトのためのAPIしかauth系列には存在しないから特に問題ないが、後々増えてきた場合には、`api/auth/refresh`をPath属性とできるような実装を施す必要性がある。
+    Access Token だけ valid な状態で Refresh Token を発行できるようにすると、短期トークンの漏洩が長期セッション（Redis TTL 168h）への **権限昇格** になる。Refresh Token は OAuth で本人確認が済んだときだけ発行するのが正しい。
+
+    **Path 属性**：Set-Cookie の `Path` はレスポンス URL ではなく属性で決まるため、callback から `Path=/api/auth/refresh` を付けて Set-Cookie することは可能である。現状は `Path=/api/auth` だが、狭い Path に変更すると logout 等では Cookie がリクエストに付かないため、Redis 側の失効処理は access_token から userId を特定するなど別途設計が必要になる。
 
     
 
@@ -272,6 +274,9 @@ erDiagram
         text google_sub UK
         timestamptz created_at
         varchar username
+        text email
+        varchar hashed_password
+        boolean email_verified
     }
     posts {
         uuid id PK
@@ -294,7 +299,11 @@ erDiagram
 
 **注記**
 
+- `users.google_sub`：NULL 許容（migration `000008`）。Google OAuth ユーザー向け。`UNIQUE` 制約は列定義のまま。
 - `users.username`：NULL 許容。`(username IS NOT NULL AND username <> '')` の行にのみ効く一意制約インデックス `users_username_unique`（migration `000007`）。ER 図では部分的 UNIQUE を表現しきれないため上記のみ記載する。
+- `users.email`：NULL 許容。メール／パスワード登録および OAuth 連携時の重複検知用。`(LOWER(email) WHERE email IS NOT NULL AND email <> '')` に効く一意制約インデックス `users_email_unique`（migration `000008`）。
+- `users.hashed_password`：NULL 許容。平文パスワードは保存しない。
+- `users.email_verified`：`NOT NULL DEFAULT FALSE`。メール確認済みかどうか。
 - `posts.username`：投稿時に表示用として保持する列（migration `000006`）。
 - `likes`：`PRIMARY KEY (user_id, post_id)` により、同一ユーザーが同一投稿に複数の like を挿入できない。
 - `follows`：`follower_id` と `followee_id` はいずれも `users.id` を参照。主キーは `(follower_id, followee_id)`。
