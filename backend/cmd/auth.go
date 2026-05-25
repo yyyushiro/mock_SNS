@@ -94,6 +94,26 @@ func AuthFromRequest(r *http.Request) (*AuthResult, bool) {
 	return ar, true
 }
 
+// InitRefreshToken creates a refresh token and store it into Redis.
+func InitRefreshToken(userId uuid.UUID, rdb *redis.Client, ctx context.Context) (string, int, error) {
+	refreshToken, err := generateRefreshToken()
+	if err != nil {
+		return "", 0, err
+	}
+
+	refreshTokenDuration, err := strconv.Atoi(os.Getenv("REFRESH_TOKEN_DURATION"))
+	if err != nil {
+		return "", 0, err
+	}
+
+	err = rdb.Set(ctx, refreshToken, userId.String(), time.Duration(refreshTokenDuration)*time.Hour).Err()
+	if err != nil {
+		return "", 0, fmt.Errorf("Setting refresh token: %w", err)
+	}
+
+	return refreshToken, refreshTokenDuration, nil
+}
+
 // RequireAuth verifies the user's session via access or refresh token.
 func RequireAuth(r *http.Request, rdb *redis.Client) (*AuthResult, error) {
 	accessToken, err := GetAndVerifyCookie(r, "access_token")

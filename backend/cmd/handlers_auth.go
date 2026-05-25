@@ -31,6 +31,9 @@ func (a *App) AuthenticationURIHandler(w http.ResponseWriter, r *http.Request) {
 
 // GetAccessTokenHandler takes the redirect URI, then gets the access token and openID.
 func (a *App) GetAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
 	stateValue, err := GetAndVerifyCookie(r, "state")
 	if err != nil {
 		if errors.Is(err, http.ErrNoCookie) {
@@ -52,7 +55,7 @@ func (a *App) GetAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 	stateDeleteCookie := MakeDeleteCookie("state")
 	http.SetCookie(w, stateDeleteCookie)
 
-	tok, err := a.OAuth2Conf.Exchange(context.TODO(), r.URL.Query().Get("code"))
+	tok, err := a.OAuth2Conf.Exchange(ctx, r.URL.Query().Get("code"))
 	if err != nil {
 		log.Printf("Exchange Authorization Code: %s", err)
 		http.Error(w, "invalid session", http.StatusUnauthorized)
@@ -65,7 +68,7 @@ func (a *App) GetAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	openIdToken, err := a.OIDCVerifier.Verify(r.Context(), rawOpenIdToken)
+	openIdToken, err := a.OIDCVerifier.Verify(ctx, rawOpenIdToken)
 	if err != nil {
 		http.Error(w, "invalid OpenID Token", http.StatusUnauthorized)
 		return
@@ -108,8 +111,7 @@ func (a *App) GetAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Register the user if the user is new. Then, get the user's userId.
 	var userId uuid.UUID
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
+
 	// If the sub already exists, it technically updates the existing sub with the new one. However, since they are the same, it does nothing and just returns the user id.
 	err = a.Pool.QueryRow(ctx, "INSERT INTO users (google_sub) VALUES ($1) ON CONFLICT (google_sub) DO UPDATE SET google_sub = EXCLUDED.google_sub RETURNING id", sub).Scan(&userId)
 	if err != nil {
@@ -126,29 +128,13 @@ func (a *App) GetAccessTokenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// This cookie is needed for authorization of user in each request.
+	// Signed Cookie prevents attacker's changing Cookie.
 	accessTokenCookie := MakeSignedCookie("access_token", signedAccessToken, 900)
 	http.SetCookie(w, accessTokenCookie)
 
-	// Store refresh token into Redis and Cookie for getting new access token when expired.
-	refreshToken, err := generateRefreshToken()
+	refreshToken, refreshTokenDuration, err := InitRefreshToken(userId, a.Rdb, ctx)
 	if err != nil {
-		log.Printf("generating refresh token: %s", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	refreshTokenDuration, err := strconv.Atoi(os.Getenv("REFRESH_TOKEN_DURATION"))
-	if err != nil {
-		log.Printf("parsing refresh token duration: %s", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	ctx, cancel = context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-	err = a.Rdb.Set(ctx, refreshToken, userId.String(), time.Duration(refreshTokenDuration)*time.Hour).Err()
-	if err != nil {
-		log.Printf("storing refresh token into Redis: %s", err)
+		log.Println(err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
