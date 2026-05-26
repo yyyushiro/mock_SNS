@@ -226,6 +226,14 @@ export async function logout(): Promise<void> {
     if (!response.ok) {
         throw new Error(`Response status: ${response.status}`)
     }
+
+    const refreshResponse = await fetch("/api/auth/refresh", {
+        method: "DELETE",
+        credentials: "include",
+    })
+    if (!refreshResponse.ok) {
+        throw new Error(`Response status: ${refreshResponse.status}`)
+    }
 }
 
 export type MyUserInfo = {

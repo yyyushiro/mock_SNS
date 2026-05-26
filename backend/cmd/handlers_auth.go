@@ -180,7 +180,10 @@ func (a *App) RefreshTokenHandler(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) LogOutHandler(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, a.MakeDeleteCookie("access_token"))
+	w.WriteHeader(http.StatusOK)
+}
 
+func (a *App) DeleteRefreshTokenHandler(w http.ResponseWriter, r *http.Request) {
 	refreshToken, err := a.GetAndVerifyCookie(r, "refresh_token")
 	if err != nil {
 		log.Printf("Getting refresh token: %s", err)
@@ -190,16 +193,14 @@ func (a *App) LogOutHandler(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err = a.Rdb.Del(ctx, refreshToken).Err()
-	if err != nil {
+	if err := a.Rdb.Del(ctx, refreshToken).Err(); err != nil {
 		log.Printf("Deleting refresh token from Redis: %s", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
 	http.SetCookie(w, a.MakeDeleteRefreshTokenCookie())
-
-	w.WriteHeader(http.StatusNoContent)
+	w.WriteHeader(http.StatusOK)
 }
 
 // VerifyEmailHandler handles GET /api/auth/verify-email.

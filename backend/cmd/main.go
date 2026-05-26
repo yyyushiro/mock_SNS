@@ -82,6 +82,7 @@ func main() {
 	mux.HandleFunc("GET /api/auth/callback/google", app.GetAccessTokenHandler)
 	mux.HandleFunc("POST /api/auth/refresh", app.RefreshTokenHandler)
 	mux.HandleFunc("POST /api/auth/logout", app.WithAuth(app.LogOutHandler))
+	mux.HandleFunc("DELETE /api/auth/refresh", app.DeleteRefreshTokenHandler)
 	mux.HandleFunc("POST /api/auth/register", app.RegisterHandler)
 	mux.HandleFunc("GET /api/auth/verify-email", app.VerifyEmailHandler)
 
