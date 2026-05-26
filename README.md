@@ -17,6 +17,8 @@ Google アカウントでのログイン、投稿・いいね・フォロー、�
 | Google OAuth コールバック | GET | `/api/auth/callback/google` |
 | Access Token Refresh | POST | `/api/auth/refresh` |
 | ログアウト | POST | `/api/auth/logout` |
+| メール仮登録 | POST | `/api/auth/register` |
+| メール認証・ログイン | GET | `/api/auth/verify-email` |
 | 自分の情報取得 | GET | `/api/user/me` |
 | ユーザー名更新 | PATCH | `/api/user/me/name` |
 | 自分の投稿一覧 | GET | `/api/user/me/posts` |
@@ -124,6 +126,15 @@ Google アカウントでのログイン、投稿・いいね・フォロー、�
 
 7. **ログアウト**：`access_token` / `refresh_token` Cookie を削除し、Redis のリフレッシュキーを `DEL`。
 
+8. **`POST /api/auth/register`**（[`handlers_auth.go`](backend/cmd/handlers_auth.go)）
+
+   JSON ボディ `{email, password}` を受け取り、　DBに仮登録後、Resend API 経由で認証リンク（`APP_PUBLIC_URL/verify-email?token=…`）をメール送信する。
+
+
+9. **`GET /api/auth/verify-email`**（[`handlers_auth.go`](backend/cmd/handlers_auth.go)）
+
+   仮登録済ユーザーがメール内の認証リンクを踏むことでPOST Reqeustが送られ、認証リンク内に含まれる不透明トークンを利用して対象ユーザーを認証する。
+
 8. **Cookie の共通属性**：`HttpOnly: true`、`SameSite: Lax`、`Secure` はデプロイ時 `true`。値は名前と値から HMAC（`HMAC_SECRET_KEY`）した署名付き。
 
 9. **OAuth のスコープ**：`openid` のみ。
@@ -193,7 +204,15 @@ Google アカウントでのログイン、投稿・いいね・フォロー、�
 
     **Path 属性**：Set-Cookie の `Path` はレスポンス URL ではなく属性で決まるため、callback から `Path=/api/auth/refresh` を付けて Set-Cookie することは可能である。現状は `Path=/api/auth` だが、狭い Path に変更すると logout 等では Cookie がリクエストに付かないため、Redis 側の失効処理は access_token から userId を特定するなど別途設計が必要になる。
 
-    
+- GETDEL によるワンタイムトークン：「その認証リンクは本当に一度しか使われていないか？」
+
+    メール認証リンクのトークンは Redis に `email_verify:{token}` というキーで保存されている。
+
+    もし検証時にトークンの取得（GET）と削除（DEL）を別々に実行していたとすると、攻撃者が同じリンクを素早く二度叩いた場合、どちらのリクエストも削除前にトークンを取得できてしまう可能性がある。
+
+    GETDEL はその二操作を不可分（原子的）にするため、たとえ同じリンクへのリクエストが同時に届いても、必ず一方だけが userId を取得できる。もう一方は Redis から nil が返り、400 として弾かれる。
+
+    これにより、同じリンクを使った二重認証やリプレイ攻撃を完全に防ぐことができる。
 
 <!-- 追記例: state を入れた狙い／nonce と ID Token の組み合わせの狙い／HttpOnly と SameSite のトレードオフ／なぜ Redis に refresh を載せているか／OIDC verifier に ClientID を渡している意味／JWT と Cookie Max-Age の関係について -->
 
@@ -230,6 +249,41 @@ sequenceDiagram
     Backend->>Backend: Generate refresh_token random Store in Redis TTL REFRESH_TOKEN_DURATION hours
     Backend->>Browser: Set-Cookie signed refresh_token Max-Age 604800
     Backend->>Browser: Redirect to APP_PUBLIC_URL timeline path
+```
+
+### メール登録〜メール認証・オートログインまで
+
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant Backend
+    participant Resend
+    participant Redis
+    participant Postgres
+    Browser->>Backend: POST /api/auth/register email password
+    Backend->>Postgres: INSERT users email hashed_password email_verified=false
+    Postgres->>Backend: userId UUID
+    Backend->>Redis: SET email_verify:token=userId TTL 24h
+    Backend->>Resend: Send verification email with link
+    Backend->>Browser: 201 Created
+    Note over Browser,Resend: User clicks the link in the email
+    Browser->>Backend: GET /api/auth/verify-email?token=opaque
+    alt token param missing
+        Backend->>Browser: 400 missing token
+    end
+    Backend->>Redis: GETDEL email_verify:token
+    alt nil expired or replayed
+        Redis->>Backend: nil
+        Backend->>Browser: 400 invalid or expired token
+    end
+    Redis->>Backend: userId UUID
+    Backend->>Postgres: UPDATE users SET email_verified=true WHERE id=userId
+    Postgres->>Backend: 1 row updated
+    Backend->>Backend: MakeSignedAccessToken JWT
+    Backend->>Redis: SET refreshToken=userId TTL
+    Redis->>Backend: OK
+    Backend->>Browser: Set-Cookie access_token refresh_token
+    Backend->>Browser: 302 redirect to timeline
 ```
 
 ### 認証済み API リクエスト

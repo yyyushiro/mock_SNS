@@ -202,6 +202,61 @@ func (a *App) LogOutHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// VerifyEmailHandler handles GET /api/auth/verify-email.
+// Consumes the one-time token from Redis (GETDEL — replay-safe), marks the
+// account verified in Postgres, then issues session cookies and redirects to
+// the timeline — auto-logging the user in on first click.
+//
+// 302 Found        — verified; access_token + refresh_token set in cookies.
+// 400 Bad Request  — token param missing, expired, already used, or unknown.
+// 500 Internal     — DB, Redis, or JWT signing failure (logged).
+func (a *App) VerifyEmailHandler(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		http.Error(w, "missing token", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	// GETDEL is atomic: a replayed request always hits redis.Nil here.
+	userId, err := a.consumeVerificationToken(ctx, token)
+	if err != nil {
+		if errors.Is(err, ErrInvalidVerificationToken) {
+			http.Error(w, "invalid or expired token", http.StatusBadRequest)
+			return
+		}
+		log.Printf("consumeVerificationToken: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	if err := MarkEmailVerified(ctx, a.Pool, userId); err != nil {
+		log.Printf("MarkEmailVerified userId=%s: %v", userId, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	signedAccessToken, err := a.MakeSignedAccessToken(userId)
+	if err != nil {
+		log.Printf("MakeSignedAccessToken userId=%s: %v", userId, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, a.MakeSignedCookie("access_token", signedAccessToken, a.AccessTokenDuration*60))
+
+	refreshToken, refreshTokenDuration, err := a.InitRefreshToken(userId, ctx)
+	if err != nil {
+		log.Printf("InitRefreshToken userId=%s: %v", userId, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, a.MakeSignedRefreshTokenCookie(refreshToken, refreshTokenDuration*3600))
+
+	http.Redirect(w, r, a.AppPublicURL+"/timeline", http.StatusFound)
+}
+
 // RegisterHandler handles POST /api/auth/register.
 // It accepts a JSON body of {email, password}, creates an unverified user account,
 // and triggers a verification email. No session cookie is issued — the client must

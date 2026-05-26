@@ -64,6 +64,10 @@ func verifyPassword(hashed, plain string) bool {
 
 const verificationTokenTTL = 24 * time.Hour
 
+// ErrInvalidVerificationToken is returned when the opaque token is absent
+// from Redis — either expired, never existed, or already consumed.
+var ErrInvalidVerificationToken = errors.New("invalid or expired verification token")
+
 func verificationRedisKey(token string) string {
 	return "email_verify:" + token
 }
@@ -80,7 +84,7 @@ func (a *App) consumeVerificationToken(ctx context.Context, token string) (uuid.
 	subStr, err := a.Rdb.GetDel(ctx, verificationRedisKey(token)).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			return uuid.UUID{}, fmt.Errorf("invalid or expired verification token")
+			return uuid.UUID{}, ErrInvalidVerificationToken
 		}
 		return uuid.UUID{}, fmt.Errorf("consuming verification token: %w", err)
 	}

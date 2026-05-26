@@ -83,6 +83,7 @@ func main() {
 	mux.HandleFunc("POST /api/auth/refresh", app.RefreshTokenHandler)
 	mux.HandleFunc("POST /api/auth/logout", app.WithAuth(app.LogOutHandler))
 	mux.HandleFunc("POST /api/auth/register", app.RegisterHandler)
+	mux.HandleFunc("GET /api/auth/verify-email", app.VerifyEmailHandler)
 
 	// Posts
 	mux.HandleFunc("POST /api/posts", app.WithAuth(app.MakePostHandler))

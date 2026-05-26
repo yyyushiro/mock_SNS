@@ -270,6 +270,20 @@ func UpdateMyUsername(userID uuid.UUID, username string, pool *pgxpool.Pool, ctx
 	return nil
 }
 
+// MarkEmailVerified flips email_verified to true for the given user.
+// 0 rows affected means the userId from Redis has no matching Postgres row —
+// a data-integrity breach that should never happen in normal operation.
+func MarkEmailVerified(ctx context.Context, pool *pgxpool.Pool, userId uuid.UUID) error {
+	tag, err := pool.Exec(ctx, `UPDATE users SET email_verified = true WHERE id = $1`, userId)
+	if err != nil {
+		return fmt.Errorf("marking email verified: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("marking email verified: no user row for id %s", userId)
+	}
+	return nil
+}
+
 // InsertPasswordUser creates a new user row with the given normalized email and
 // bcrypt-hashed password. It returns the generated UUID on success.
 //
