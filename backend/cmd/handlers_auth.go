@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -179,7 +180,10 @@ func (a *App) RefreshTokenHandler(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) LogOutHandler(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, a.MakeDeleteCookie("access_token"))
+	w.WriteHeader(http.StatusOK)
+}
 
+func (a *App) DeleteRefreshTokenHandler(w http.ResponseWriter, r *http.Request) {
 	refreshToken, err := a.GetAndVerifyCookie(r, "refresh_token")
 	if err != nil {
 		log.Printf("Getting refresh token: %s", err)
@@ -189,14 +193,216 @@ func (a *App) LogOutHandler(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err = a.Rdb.Del(ctx, refreshToken).Err()
-	if err != nil {
+	if err := a.Rdb.Del(ctx, refreshToken).Err(); err != nil {
 		log.Printf("Deleting refresh token from Redis: %s", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
 	http.SetCookie(w, a.MakeDeleteRefreshTokenCookie())
+	w.WriteHeader(http.StatusOK)
+}
 
-	w.WriteHeader(http.StatusNoContent)
+// VerifyEmailHandler handles GET /api/auth/verify-email.
+// Consumes the one-time token from Redis (GETDEL — replay-safe), marks the
+// account verified in Postgres, then issues session cookies and redirects to
+// the timeline — auto-logging the user in on first click.
+//
+// 302 Found        — verified; access_token + refresh_token set in cookies.
+// 400 Bad Request  — token param missing, expired, already used, or unknown.
+// 500 Internal     — DB, Redis, or JWT signing failure (logged).
+func (a *App) VerifyEmailHandler(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		http.Error(w, "missing token", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	// GETDEL is atomic: a replayed request always hits redis.Nil here.
+	userId, err := a.consumeVerificationToken(ctx, token)
+	if err != nil {
+		if errors.Is(err, ErrInvalidVerificationToken) {
+			http.Error(w, "invalid or expired token", http.StatusBadRequest)
+			return
+		}
+		log.Printf("consumeVerificationToken: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	if err := MarkEmailVerified(ctx, a.Pool, userId); err != nil {
+		log.Printf("MarkEmailVerified userId=%s: %v", userId, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	signedAccessToken, err := a.MakeSignedAccessToken(userId)
+	if err != nil {
+		log.Printf("MakeSignedAccessToken userId=%s: %v", userId, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, a.MakeSignedCookie("access_token", signedAccessToken, a.AccessTokenDuration*60))
+
+	refreshToken, refreshTokenDuration, err := a.InitRefreshToken(userId, ctx)
+	if err != nil {
+		log.Printf("InitRefreshToken userId=%s: %v", userId, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, a.MakeSignedRefreshTokenCookie(refreshToken, refreshTokenDuration*3600))
+
+	http.Redirect(w, r, a.AppPublicURL+"/timeline", http.StatusFound)
+}
+
+// LoginHandler handles POST /api/auth/login.
+// Accepts {"email","password"}, validates credentials, and issues session cookies.
+//
+// 200 OK           — login successful; access_token + refresh_token set in cookies.
+// 400 Bad Request  — malformed JSON.
+// 401 Unauthorized — email/password mismatch (deliberately generic).
+// 403 Forbidden    — credentials correct but email not yet verified.
+// 500 Internal     — unexpected failure.
+func (a *App) LoginHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	userId, err := a.LoginPasswordUser(ctx, req.Email, req.Password)
+	if err != nil {
+		if errors.Is(err, ErrInvalidCredentials) {
+			http.Error(w, "invalid credentials", http.StatusUnauthorized)
+			return
+		}
+		if errors.Is(err, ErrEmailNotVerified) {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		log.Printf("LoginPasswordUser: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	signedAccessToken, err := a.MakeSignedAccessToken(userId)
+	if err != nil {
+		log.Printf("MakeSignedAccessToken userId=%s: %v", userId, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, a.MakeSignedCookie("access_token", signedAccessToken, a.AccessTokenDuration*60))
+
+	refreshToken, refreshTokenDuration, err := a.InitRefreshToken(userId, ctx)
+	if err != nil {
+		log.Printf("InitRefreshToken userId=%s: %v", userId, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, a.MakeSignedRefreshTokenCookie(refreshToken, refreshTokenDuration*3600))
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// ResendVerificationHandler handles POST /api/auth/resend-verification.
+// Accepts {"email"} and sends a new verification email if the account exists
+// and has not yet been verified. Always returns 200 to prevent user enumeration.
+//
+// 200 OK           — always (even for unknown or already-verified addresses).
+// 400 Bad Request  — malformed JSON.
+// 500 Internal     — unexpected failure (logged; still returns 200 where safe).
+func (a *App) ResendVerificationHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	normalized := normalizeEmail(req.Email)
+
+	userId, _, emailVerified, err := GetPasswordUserByEmail(ctx, a.Pool, normalized)
+	if err != nil || emailVerified {
+		// Unknown email or already verified — return 200 without doing anything.
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	token, err := generateVerificationToken()
+	if err != nil {
+		log.Printf("ResendVerification generateVerificationToken: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	if err := a.storeVerificationToken(ctx, userId, token); err != nil {
+		log.Printf("ResendVerification storeVerificationToken userId=%s: %v", userId, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	verificationURL := a.AppPublicURL + "/verify-email?token=" + token
+	if _, err := a.SendVerificationEmail(ctx, normalized, verificationURL); err != nil {
+		log.Printf("ResendVerification SendVerificationEmail userId=%s: %v", userId, err)
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// RegisterHandler handles POST /api/auth/register.
+// It accepts a JSON body of {email, password}, creates an unverified user account,
+// and triggers a verification email. No session cookie is issued — the client must
+// complete email verification before logging in.
+//
+// 201 Created      — account created; verification email dispatched (or best-effort).
+// 400 Bad Request  — malformed JSON, invalid email format, or password rejected.
+// 409 Conflict     — email address is already registered.
+// 500 Internal     — unexpected DB / Redis failure.
+func (a *App) RegisterHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	userId, verificationURL, err := a.RegisterPasswordUser(ctx, req.Email, req.Password)
+	if err != nil {
+		// Surface duplicate-email as 409 without logging — it is an expected user error.
+		if err.Error() == "email already registered" {
+			log.Println(err.Error())
+			http.Error(w, "email already registered", http.StatusConflict)
+			return
+		}
+		log.Printf("RegisterPasswordUser: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Email delivery is best-effort: the user is already persisted, so a send
+	// failure should not roll back the registration. Log and move on; the user
+	// can request a resend later.
+	if _, err := a.SendVerificationEmail(ctx, req.Email, verificationURL); err != nil {
+		log.Printf("SendVerificationEmail userId=%s: %v", userId, err)
+	}
+
+	w.WriteHeader(http.StatusCreated)
 }

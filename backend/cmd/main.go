@@ -50,6 +50,16 @@ func main() {
 		appPublicURL = "http://localhost:5173"
 	}
 
+	resendApiKey := os.Getenv("RESEND_API_KEY")
+	if resendApiKey == "" {
+		log.Fatal("invalid RESEND_API_KEY")
+	}
+
+	emailFrom := os.Getenv("EMAIL_FROM")
+	if emailFrom == "" {
+		emailFrom = "Acme <onboarding@resend.dev>"
+	}
+
 	app := &App{
 		Pool:                 pool,
 		Rdb:                  rdb,
@@ -61,6 +71,8 @@ func main() {
 		AccessTokenDuration:  accessTokenDuration,
 		RefreshTokenDuration: refreshTokenDuration,
 		AppPublicURL:         appPublicURL,
+		ResendApiKey:         resendApiKey,
+		EmailFrom:            emailFrom,
 	}
 
 	mux := http.NewServeMux()
@@ -70,6 +82,11 @@ func main() {
 	mux.HandleFunc("GET /api/auth/callback/google", app.GetAccessTokenHandler)
 	mux.HandleFunc("POST /api/auth/refresh", app.RefreshTokenHandler)
 	mux.HandleFunc("POST /api/auth/logout", app.WithAuth(app.LogOutHandler))
+	mux.HandleFunc("DELETE /api/auth/refresh", app.DeleteRefreshTokenHandler)
+	mux.HandleFunc("POST /api/auth/register", app.RegisterHandler)
+	mux.HandleFunc("GET /api/auth/verify-email", app.VerifyEmailHandler)
+	mux.HandleFunc("POST /api/auth/login", app.LoginHandler)
+	mux.HandleFunc("POST /api/auth/resend-verification", app.ResendVerificationHandler)
 
 	// Posts
 	mux.HandleFunc("POST /api/posts", app.WithAuth(app.MakePostHandler))

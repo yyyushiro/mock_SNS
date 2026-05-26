@@ -26,6 +26,8 @@ type App struct {
 	AccessTokenDuration  int // minutes
 	RefreshTokenDuration int // hours
 	AppPublicURL         string
+	ResendApiKey         string
+	EmailFrom            string
 }
 
 func connectDB() (*pgxpool.Pool, error) {

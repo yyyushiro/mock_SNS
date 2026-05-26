@@ -9,3 +9,5 @@ backend/kaima
 .memo
 cookies.txt
 fly-deploy.sh
+.cursor
+backend/AGENTS.md

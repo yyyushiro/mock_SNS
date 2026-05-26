@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -266,4 +268,62 @@ func UpdateMyUsername(userID uuid.UUID, username string, pool *pgxpool.Pool, ctx
 		return fmt.Errorf("updating username in posts table: %w", err)
 	}
 	return nil
+}
+
+// MarkEmailVerified flips email_verified to true for the given user.
+// 0 rows affected means the userId from Redis has no matching Postgres row —
+// a data-integrity breach that should never happen in normal operation.
+func MarkEmailVerified(ctx context.Context, pool *pgxpool.Pool, userId uuid.UUID) error {
+	tag, err := pool.Exec(ctx, `UPDATE users SET email_verified = true WHERE id = $1`, userId)
+	if err != nil {
+		return fmt.Errorf("marking email verified: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("marking email verified: no user row for id %s", userId)
+	}
+	return nil
+}
+
+// GetPasswordUserByEmail looks up a password-based account by its normalized email.
+// Returns the user's id, bcrypt-hashed password, and email_verified flag.
+// pgx.ErrNoRows is returned (wrapped) when no matching row exists.
+func GetPasswordUserByEmail(ctx context.Context, pool *pgxpool.Pool, normalizedEmail string) (uuid.UUID, string, bool, error) {
+	var id uuid.UUID
+	var hashedPassword string
+	var emailVerified bool
+	err := pool.QueryRow(ctx,
+		`SELECT id, hashed_password, email_verified FROM users WHERE email = $1`,
+		normalizedEmail,
+	).Scan(&id, &hashedPassword, &emailVerified)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.UUID{}, "", false, fmt.Errorf("get password user by email: %w", pgx.ErrNoRows)
+		}
+		return uuid.UUID{}, "", false, fmt.Errorf("get password user by email: %w", err)
+	}
+	return id, hashedPassword, emailVerified, nil
+}
+
+// InsertPasswordUser creates a new user row with the given normalized email and
+// bcrypt-hashed password. It returns the generated UUID on success.
+//
+// The caller is responsible for normalizing the email before passing it here;
+// the unique index on LOWER(email) enforces uniqueness at the DB level.
+// A PostgreSQL unique-violation (23505) is surfaced as a sentinel error so the
+// HTTP layer can return 409 without logging a full stack trace.
+func InsertPasswordUser(ctx context.Context, pool *pgxpool.Pool, email, hashedPassword string) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := pool.QueryRow(ctx,
+		`INSERT INTO users (email, hashed_password) VALUES ($1, $2) RETURNING id`,
+		email, hashedPassword,
+	).Scan(&id)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		// 23505 = unique_violation; the LOWER(email) index was hit.
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return uuid.UUID{}, fmt.Errorf("email already registered")
+		}
+		return uuid.UUID{}, fmt.Errorf("inserting password user: %w", err)
+	}
+	return id, nil
 }
