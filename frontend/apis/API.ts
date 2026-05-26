@@ -218,6 +218,54 @@ export async function deletePost(postId: string): Promise<void> {
     }
 }
 
+export class RegisterError extends Error {
+    readonly reason: "email_already_registered"
+    constructor(reason: "email_already_registered") {
+        super(reason)
+        this.name = "RegisterError"
+        this.reason = reason
+    }
+}
+
+export async function register(email: string, password: string): Promise<void> {
+    const response = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+    })
+    if (response.status === 409) throw new RegisterError("email_already_registered")
+    if (!response.ok) throw new Error(`Response status: ${response.status}`)
+}
+
+export class LoginError extends Error {
+    readonly reason: "invalid_credentials" | "email_not_verified"
+    constructor(reason: "invalid_credentials" | "email_not_verified") {
+        super(reason)
+        this.name = "LoginError"
+        this.reason = reason
+    }
+}
+
+export async function login(email: string, password: string): Promise<void> {
+    const response = await fetch("/api/auth/login", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+    })
+    if (response.status === 401) throw new LoginError("invalid_credentials")
+    if (response.status === 403) throw new LoginError("email_not_verified")
+    if (!response.ok) throw new Error(`Response status: ${response.status}`)
+}
+
+export async function resendVerification(email: string): Promise<void> {
+    await fetch("/api/auth/resend-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+    })
+}
+
 export async function logout(): Promise<void> {
     const response = await fetch("/api/auth/logout", {
         method: "POST",

@@ -284,6 +284,26 @@ func MarkEmailVerified(ctx context.Context, pool *pgxpool.Pool, userId uuid.UUID
 	return nil
 }
 
+// GetPasswordUserByEmail looks up a password-based account by its normalized email.
+// Returns the user's id, bcrypt-hashed password, and email_verified flag.
+// pgx.ErrNoRows is returned (wrapped) when no matching row exists.
+func GetPasswordUserByEmail(ctx context.Context, pool *pgxpool.Pool, normalizedEmail string) (uuid.UUID, string, bool, error) {
+	var id uuid.UUID
+	var hashedPassword string
+	var emailVerified bool
+	err := pool.QueryRow(ctx,
+		`SELECT id, hashed_password, email_verified FROM users WHERE email = $1`,
+		normalizedEmail,
+	).Scan(&id, &hashedPassword, &emailVerified)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.UUID{}, "", false, fmt.Errorf("get password user by email: %w", pgx.ErrNoRows)
+		}
+		return uuid.UUID{}, "", false, fmt.Errorf("get password user by email: %w", err)
+	}
+	return id, hashedPassword, emailVerified, nil
+}
+
 // InsertPasswordUser creates a new user row with the given normalized email and
 // bcrypt-hashed password. It returns the generated UUID on success.
 //

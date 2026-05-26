@@ -258,6 +258,110 @@ func (a *App) VerifyEmailHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, a.AppPublicURL+"/timeline", http.StatusFound)
 }
 
+// LoginHandler handles POST /api/auth/login.
+// Accepts {"email","password"}, validates credentials, and issues session cookies.
+//
+// 200 OK           — login successful; access_token + refresh_token set in cookies.
+// 400 Bad Request  — malformed JSON.
+// 401 Unauthorized — email/password mismatch (deliberately generic).
+// 403 Forbidden    — credentials correct but email not yet verified.
+// 500 Internal     — unexpected failure.
+func (a *App) LoginHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	userId, err := a.LoginPasswordUser(ctx, req.Email, req.Password)
+	if err != nil {
+		if errors.Is(err, ErrInvalidCredentials) {
+			http.Error(w, "invalid credentials", http.StatusUnauthorized)
+			return
+		}
+		if errors.Is(err, ErrEmailNotVerified) {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		log.Printf("LoginPasswordUser: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	signedAccessToken, err := a.MakeSignedAccessToken(userId)
+	if err != nil {
+		log.Printf("MakeSignedAccessToken userId=%s: %v", userId, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, a.MakeSignedCookie("access_token", signedAccessToken, a.AccessTokenDuration*60))
+
+	refreshToken, refreshTokenDuration, err := a.InitRefreshToken(userId, ctx)
+	if err != nil {
+		log.Printf("InitRefreshToken userId=%s: %v", userId, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, a.MakeSignedRefreshTokenCookie(refreshToken, refreshTokenDuration*3600))
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// ResendVerificationHandler handles POST /api/auth/resend-verification.
+// Accepts {"email"} and sends a new verification email if the account exists
+// and has not yet been verified. Always returns 200 to prevent user enumeration.
+//
+// 200 OK           — always (even for unknown or already-verified addresses).
+// 400 Bad Request  — malformed JSON.
+// 500 Internal     — unexpected failure (logged; still returns 200 where safe).
+func (a *App) ResendVerificationHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	normalized := normalizeEmail(req.Email)
+
+	userId, _, emailVerified, err := GetPasswordUserByEmail(ctx, a.Pool, normalized)
+	if err != nil || emailVerified {
+		// Unknown email or already verified — return 200 without doing anything.
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	token, err := generateVerificationToken()
+	if err != nil {
+		log.Printf("ResendVerification generateVerificationToken: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	if err := a.storeVerificationToken(ctx, userId, token); err != nil {
+		log.Printf("ResendVerification storeVerificationToken userId=%s: %v", userId, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	verificationURL := a.AppPublicURL + "/verify-email?token=" + token
+	if _, err := a.SendVerificationEmail(ctx, normalized, verificationURL); err != nil {
+		log.Printf("ResendVerification SendVerificationEmail userId=%s: %v", userId, err)
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
 // RegisterHandler handles POST /api/auth/register.
 // It accepts a JSON body of {email, password}, creates an unverified user account,
 // and triggers a verification email. No session cookie is issued — the client must

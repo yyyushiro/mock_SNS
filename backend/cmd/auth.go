@@ -68,6 +68,13 @@ const verificationTokenTTL = 24 * time.Hour
 // from Redis — either expired, never existed, or already consumed.
 var ErrInvalidVerificationToken = errors.New("invalid or expired verification token")
 
+// ErrInvalidCredentials is returned when email or password does not match.
+var ErrInvalidCredentials = errors.New("invalid credentials")
+
+// ErrEmailNotVerified is returned when credentials are correct but the email
+// address has not yet been verified.
+var ErrEmailNotVerified = errors.New("email not verified")
+
 func verificationRedisKey(token string) string {
 	return "email_verify:" + token
 }
@@ -226,8 +233,27 @@ func (a *App) RegisterPasswordUser(ctx context.Context, email, plainPassword str
 	if err := a.storeVerificationToken(ctx, userId, token); err != nil {
 		return uuid.UUID{}, "", err
 	}
-	verificationURL := a.AppPublicURL + "/verify-email?token=" + token
+	verificationURL := a.AppPublicURL + "/api/auth/verify-email?token=" + token
 	return userId, verificationURL, nil
+}
+
+// LoginPasswordUser validates an email/password pair and returns the user's ID.
+//
+// ErrInvalidCredentials is returned when no account exists for the email or
+// the password does not match — deliberately indistinguishable to callers.
+// ErrEmailNotVerified is returned when credentials are correct but the account
+// has not yet completed email verification.
+func (a *App) LoginPasswordUser(ctx context.Context, email, plainPassword string) (uuid.UUID, error) {
+	normalized := normalizeEmail(email)
+	id, hashedPassword, emailVerified, err := GetPasswordUserByEmail(ctx, a.Pool, normalized)
+	if err != nil || !verifyPassword(hashedPassword, plainPassword) {
+		// Treat "no such user" identically to a wrong password.
+		return uuid.UUID{}, ErrInvalidCredentials
+	}
+	if !emailVerified {
+		return uuid.UUID{}, ErrEmailNotVerified
+	}
+	return id, nil
 }
 
 // SendVerificationEmail delivers a verification link to the registrant.

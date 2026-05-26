@@ -1,7 +1,7 @@
+import { useNavigate } from "react-router-dom"
+
 export default function TitlePage() {
-    const handleGoogleLogin = () => {
-        window.location.href = '/api/auth/google/start'
-    }
+    const navigate = useNavigate()
 
     return (
         <div className="title-page">
@@ -9,7 +9,21 @@ export default function TitlePage() {
             <button
                 type="button"
                 className="btn btn--primary"
-                onClick={handleGoogleLogin}
+                onClick={() => navigate("/register")}
+            >
+                メールで新規登録
+            </button>
+            <button
+                type="button"
+                className="btn btn--primary"
+                onClick={() => navigate("/login")}
+            >
+                メールでログイン
+            </button>
+            <button
+                type="button"
+                className="btn btn--secondary"
+                onClick={() => { window.location.href = "/api/auth/google/start" }}
             >
                 Googleでログイン
             </button>

@@ -85,6 +85,8 @@ func main() {
 	mux.HandleFunc("DELETE /api/auth/refresh", app.DeleteRefreshTokenHandler)
 	mux.HandleFunc("POST /api/auth/register", app.RegisterHandler)
 	mux.HandleFunc("GET /api/auth/verify-email", app.VerifyEmailHandler)
+	mux.HandleFunc("POST /api/auth/login", app.LoginHandler)
+	mux.HandleFunc("POST /api/auth/resend-verification", app.ResendVerificationHandler)
 
 	// Posts
 	mux.HandleFunc("POST /api/posts", app.WithAuth(app.MakePostHandler))
