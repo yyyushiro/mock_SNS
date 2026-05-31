@@ -77,12 +77,14 @@ func DeletePost(userId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Contex
 
 func GetMyPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) ([]Post, error) {
 	rows, err := pool.Query(ctx, `
-		SELECT id, user_id, username, body, created_at,
-			EXISTS (
-				SELECT 1 FROM likes
-				WHERE likes.user_id = $1 AND likes.post_id = posts.id
-			)
-		FROM posts WHERE user_id = $1`, userId)
+	SELECT id, user_id, COALESCE(username, ''), body, created_at,
+	EXISTS (
+		SELECT 1 FROM likes
+		WHERE likes.user_id = $1 AND likes.post_id = posts.id
+	),
+	(SELECT COUNT(*) FROM likes WHERE likes.post_id = posts.id)
+	FROM posts
+	WHERE user_id = $1`, userId)
 	if err != nil {
 		return nil, fmt.Errorf("Getting post rows: %w", err)
 	}
@@ -90,20 +92,11 @@ func GetMyPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) ([]Po
 	var posts []Post
 	for rows.Next() {
 		var p Post
-		var username sql.NullString
-		if err := rows.Scan(&p.Id, &p.UserId, &username, &p.Body, &p.CreatedAt, &p.LikedByMe); err != nil {
+		if err := rows.Scan(&p.Id, &p.UserId, &p.Username, &p.Body, &p.CreatedAt, &p.LikedByMe, &p.LikeCount); err != nil {
 			return nil, fmt.Errorf("Scanning posts: %w", err)
 		}
-		p.Username = sqlNullStringToString(username)
-
-		p.LikeCount, err = aggregateLikeCount(p.Id, pool, ctx)
-		if err != nil {
-			return nil, err
-		}
-
 		posts = append(posts, p)
 	}
-	// This error block catches when the iteration finishes abnormally.
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("Scanned posts: %w", err)
 	}
@@ -111,12 +104,14 @@ func GetMyPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) ([]Po
 }
 
 func GetPublicPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) ([]Post, error) {
-	rows, err := pool.Query(ctx, `SELECT id, user_id, username, body, created_at,
+	rows, err := pool.Query(ctx, `
+	SELECT id, user_id, COALESCE(username, ''), body, created_at,
 	EXISTS (
 		SELECT 1 FROM likes
 		WHERE likes.user_id = $1 AND likes.post_id = posts.id
-	) 
-	FROM posts 
+	),
+	(SELECT COUNT(*) FROM likes WHERE likes.post_id = posts.id)
+	FROM posts
 	WHERE posts.user_id <> $1
 	AND NOT EXISTS (
 	  SELECT 1 FROM follows f
@@ -128,20 +123,11 @@ func GetPublicPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (
 	var posts []Post
 	for rows.Next() {
 		var p Post
-		var username sql.NullString
-		if err := rows.Scan(&p.Id, &p.UserId, &username, &p.Body, &p.CreatedAt, &p.LikedByMe); err != nil {
+		if err := rows.Scan(&p.Id, &p.UserId, &p.Username, &p.Body, &p.CreatedAt, &p.LikedByMe, &p.LikeCount); err != nil {
 			return nil, fmt.Errorf("Scanning posts: %w", err)
 		}
-		p.Username = sqlNullStringToString(username)
-
-		p.LikeCount, err = aggregateLikeCount(p.Id, pool, ctx)
-		if err != nil {
-			return nil, err
-		}
-
 		posts = append(posts, p)
 	}
-	// This error block catches when the iteration finishes abnormally.
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("Scanned posts: %w", err)
 	}
@@ -149,12 +135,14 @@ func GetPublicPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (
 }
 
 func GetFollowingPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) ([]Post, error) {
-	rows, err := pool.Query(ctx, `SELECT id, user_id, username, body, created_at,
+	rows, err := pool.Query(ctx, `
+	SELECT id, user_id, COALESCE(username, ''), body, created_at,
 	EXISTS (
 		SELECT 1 FROM likes
 		WHERE likes.user_id = $1 AND likes.post_id = posts.id
-	) 
-	FROM posts 
+	),
+	(SELECT COUNT(*) FROM likes WHERE likes.post_id = posts.id)
+	FROM posts
 	WHERE posts.user_id <> $1
 	AND EXISTS (
 	  SELECT 1 FROM follows f
@@ -166,20 +154,11 @@ func GetFollowingPosts(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context
 	var posts []Post
 	for rows.Next() {
 		var p Post
-		var username sql.NullString
-		if err := rows.Scan(&p.Id, &p.UserId, &username, &p.Body, &p.CreatedAt, &p.LikedByMe); err != nil {
+		if err := rows.Scan(&p.Id, &p.UserId, &p.Username, &p.Body, &p.CreatedAt, &p.LikedByMe, &p.LikeCount); err != nil {
 			return nil, fmt.Errorf("Scanning posts: %w", err)
 		}
-		p.Username = sqlNullStringToString(username)
-
-		p.LikeCount, err = aggregateLikeCount(p.Id, pool, ctx)
-		if err != nil {
-			return nil, err
-		}
-
 		posts = append(posts, p)
 	}
-	// This error block catches when the iteration finishes abnormally.
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("Scanned posts: %w", err)
 	}
@@ -216,15 +195,6 @@ func UndoLikePost(likerId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Con
 	return nil
 }
 
-func aggregateLikeCount(postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (int, error) {
-	var count int
-	// While this query is related to multiple rows, since it eventually returns a single value, user QueryRow().
-	err := pool.QueryRow(ctx, `SELECT COUNT(post_id) FROM likes WHERE post_id = $1`, postId).Scan(&count)
-	if err != nil {
-		return -1, fmt.Errorf("Counted likes: %w", err)
-	}
-	return count, nil
-}
 
 func AddFollow(followerId, followeeId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) error {
 	_, err := pool.Exec(ctx, "INSERT INTO follows (follower_id, followee_id) VALUES ($1, $2)", followerId, followeeId)

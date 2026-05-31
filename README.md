@@ -442,7 +442,37 @@ Vite がプロキシ先に `backend` ホスト名を使っているため、**�
 
 ## 開発ログ・振り返り
 
-（追記予定）
+### N+1問題の解消（投稿一覧取得）
+
+投稿一覧を取得する際、各 `post` に対して `aggregateLikeCount` を個別に呼び出していた。
+
+```go
+for rows.Next() {
+    // ...
+    p.LikeCount, err = aggregateLikeCount(p.Id, pool, ctx) // N 回クエリが発行される
+}
+```
+
+#### N+1問題とは
+
+N+1問題はクエリの計算量ではなく、**クエリの発行回数**が問題の本質。  
+1回のクエリには「ネットワーク往復 + クエリのパース・プラン生成 + DB計算」のコストがかかる。  
+投稿が100件あれば `aggregateLikeCount` だけで100回の往復が発生し、ネットワークオーバーヘッドが積み上がる。
+
+#### 解決策：サブクエリで1クエリにまとめる
+
+`like_count` の集計を SQL のサブクエリとして `SELECT` 句に含めることで、DB への往復を N+1 回から 1 回に削減した。
+
+```sql
+SELECT id, user_id, COALESCE(username, ''), body, created_at,
+  EXISTS (
+    SELECT 1 FROM likes
+    WHERE likes.user_id = $1 AND likes.post_id = posts.id
+  ),
+  (SELECT COUNT(*) FROM likes WHERE likes.post_id = posts.id)
+FROM posts
+WHERE user_id = $1
+```
 
 ---
 
