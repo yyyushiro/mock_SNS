@@ -54,23 +54,26 @@ func AddPost(sub uuid.UUID, body string, pool *pgxpool.Pool, ctx context.Context
 	return &post, nil
 }
 
-func DeletePost(userId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) error {
+func DeletePost(userId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (err error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("starting transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		if err == nil {
+			err = tx.Commit(ctx)
+		}
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
 
-	if _, err := tx.Exec(ctx, "DELETE FROM likes WHERE post_id = $1", postId); err != nil {
+	if _, err = tx.Exec(ctx, "DELETE FROM likes WHERE post_id = $1", postId); err != nil {
 		return fmt.Errorf("Deleting rows in likes: %w", err)
 	}
 
-	if _, err := tx.Exec(ctx, "DELETE FROM posts WHERE id = $1 AND user_id = $2", postId, userId); err != nil {
+	if _, err = tx.Exec(ctx, "DELETE FROM posts WHERE id = $1 AND user_id = $2", postId, userId); err != nil {
 		return fmt.Errorf("Deleting a row in posts: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("Committing transaction: %w", err)
 	}
 	return nil
 }
@@ -195,7 +198,6 @@ func UndoLikePost(likerId, postId uuid.UUID, pool *pgxpool.Pool, ctx context.Con
 	return nil
 }
 
-
 func AddFollow(followerId, followeeId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) error {
 	_, err := pool.Exec(ctx, "INSERT INTO follows (follower_id, followee_id) VALUES ($1, $2)", followerId, followeeId)
 	if err != nil {
@@ -224,8 +226,21 @@ func GetUserInfo(userId uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (*Us
 	return &user, nil
 }
 
-func UpdateMyUsername(userID uuid.UUID, username string, pool *pgxpool.Pool, ctx context.Context) error {
-	tag, err := pool.Exec(ctx, `UPDATE users SET username = $1 WHERE id = $2`, username, userID)
+func UpdateUsername(userID uuid.UUID, username string, pool *pgxpool.Pool, ctx context.Context) (err error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err == nil {
+			err = tx.Commit(ctx)
+		}
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	tag, err := tx.Exec(ctx, `UPDATE users SET username = $1 WHERE id = $2`, username, userID)
 	if err != nil {
 		return fmt.Errorf("updating username in users table: %w", err)
 	}
@@ -233,7 +248,7 @@ func UpdateMyUsername(userID uuid.UUID, username string, pool *pgxpool.Pool, ctx
 		return fmt.Errorf("updating username in users table: %w", pgx.ErrNoRows)
 	}
 
-	_, err = pool.Exec(ctx, `UPDATE posts SET username = $1 WHERE user_id = $2`, username, userID)
+	_, err = tx.Exec(ctx, `UPDATE posts SET username = $1 WHERE user_id = $2`, username, userID)
 	if err != nil {
 		return fmt.Errorf("updating username in posts table: %w", err)
 	}

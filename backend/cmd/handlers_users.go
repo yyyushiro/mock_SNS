@@ -183,7 +183,7 @@ func (a *App) PatchMyUsernameHandler(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	err := UpdateMyUsername(result.Sub, trimmed, a.Pool, ctx)
+	err := UpdateUsername(result.Sub, trimmed, a.Pool, ctx)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
