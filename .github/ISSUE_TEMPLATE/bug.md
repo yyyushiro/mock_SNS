@@ -1,3 +1,10 @@
+---
+name: bug
+about: fix bug
+title: "[BUG]:"
+---
+
+
 ## 問題
 
 ## 解決策
