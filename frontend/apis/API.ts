@@ -319,6 +319,15 @@ export async function getMyInfo(): Promise<MyUserInfo> {
     return myUserInfoFromJson(raw as MyUserInfoWire)
 }
 
+export async function deleteMyAccount(): Promise<void> {
+    const response = await apiFetch("/api/users/me", {
+        method: "DELETE",
+    })
+    if (!response.ok) {
+        throw new Error(`Response status: ${response.status}`)
+    }
+}
+
 export async function updateMyUsername(username: string): Promise<MyUserInfo> {
     const response = await apiFetch("/api/user/me/name", {
         method: "PATCH",

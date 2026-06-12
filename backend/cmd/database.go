@@ -255,6 +255,35 @@ func UpdateUsername(userID uuid.UUID, username string, pool *pgxpool.Pool, ctx c
 	return nil
 }
 
+func DeleteUser(userID uuid.UUID, pool *pgxpool.Pool, ctx context.Context) (err error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("starting transaction: %w", err)
+	}
+	defer func() {
+		if err == nil {
+			err = tx.Commit(ctx)
+		}
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	if _, err = tx.Exec(ctx, `DELETE FROM likes WHERE user_id = $1 OR post_id IN (SELECT id FROM posts WHERE user_id = $1)`, userID); err != nil {
+		return fmt.Errorf("deleting likes: %w", err)
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM follows WHERE follower_id = $1 OR followee_id = $1`, userID); err != nil {
+		return fmt.Errorf("deleting follows: %w", err)
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM posts WHERE user_id = $1`, userID); err != nil {
+		return fmt.Errorf("deleting posts: %w", err)
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID); err != nil {
+		return fmt.Errorf("deleting user: %w", err)
+	}
+	return nil
+}
+
 // MarkEmailVerified flips email_verified to true for the given user.
 // 0 rows affected means the userId from Redis has no matching Postgres row —
 // a data-integrity breach that should never happen in normal operation.

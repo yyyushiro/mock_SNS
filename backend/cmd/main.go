@@ -97,6 +97,7 @@ func main() {
 	// Users — me
 	mux.HandleFunc("GET /api/user/me", app.WithAuth(app.GetMyInfoHandler))
 	mux.HandleFunc("PATCH /api/user/me/name", app.WithAuth(app.PatchMyUsernameHandler))
+	mux.HandleFunc("DELETE /api/users/me", app.WithAuth(app.DeleteUserHandler))
 	mux.HandleFunc("GET /api/user/me/posts", app.WithAuth(app.GetMyPostsHandler))
 	mux.HandleFunc("GET /api/user/me/posts/public", app.WithAuth(app.GetPublicPostsHandler))
 	mux.HandleFunc("GET /api/user/me/posts/following", app.WithAuth(app.GetFollowingPostsHandler))

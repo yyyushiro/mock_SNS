@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import {
+    deleteMyAccount,
     getMyInfo,
     logout,
     updateMyUsername,
@@ -17,6 +18,8 @@ export default function MyPage() {
     const [saveError, setSaveError] = useState<string | null>(null)
     const [loggingOut, setLoggingOut] = useState(false)
     const [logoutError, setLogoutError] = useState<string | null>(null)
+    const [deleting, setDeleting] = useState(false)
+    const [deleteError, setDeleteError] = useState<string | null>(null)
 
     useEffect(() => {
         let cancelled = false
@@ -85,6 +88,22 @@ export default function MyPage() {
             )
         } finally {
             setLoggingOut(false)
+        }
+    }
+
+    async function handleDeleteAccount() {
+        if (!window.confirm("アカウントを削除しますか？この操作は取り消せません。")) return
+        setDeleteError(null)
+        setDeleting(true)
+        try {
+            await deleteMyAccount()
+            navigate("/", { replace: true })
+        } catch (err: unknown) {
+            setDeleteError(
+                err instanceof Error ? err.message : "Could not delete account",
+            )
+        } finally {
+            setDeleting(false)
         }
     }
 
@@ -161,6 +180,24 @@ export default function MyPage() {
                                 }}
                             >
                                 {loggingOut ? "Logging out…" : "Log out"}
+                            </button>
+                        </section>
+
+                        <section className="my-page__delete">
+                            {deleteError && (
+                                <p className="app-alert" role="alert">
+                                    {deleteError}
+                                </p>
+                            )}
+                            <button
+                                type="button"
+                                className="btn btn--danger"
+                                disabled={deleting}
+                                onClick={() => {
+                                    void handleDeleteAccount()
+                                }}
+                            >
+                                {deleting ? "Deleting…" : "Delete account"}
                             </button>
                         </section>
                     </>

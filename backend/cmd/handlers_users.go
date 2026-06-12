@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/redis/go-redis/v9"
 )
 
 type MyInfoResponse struct {
@@ -155,6 +156,36 @@ func (a *App) GetOtherUserInfoHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Writing GetOtherUserInfo response: %v", err)
 		return
 	}
+}
+
+func (a *App) DeleteUserHandler(w http.ResponseWriter, r *http.Request) {
+	result, ok := AuthFromRequest(r)
+	if !ok {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	if err := DeleteUser(result.Sub, a.Pool, ctx); err != nil {
+		log.Printf("DeleteUser: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	http.SetCookie(w, a.MakeDeleteCookie("access_token"))
+
+	refreshToken, err := a.GetAndVerifyCookie(r, "refresh_token")
+	if err == nil {
+		redisCtx, redisCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer redisCancel()
+		if redisErr := a.Rdb.Del(redisCtx, refreshToken).Err(); redisErr != nil && redisErr != redis.Nil {
+			log.Printf("DeleteUser: deleting refresh token from Redis: %v", redisErr)
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type PatchMyUsernameRequest struct {
