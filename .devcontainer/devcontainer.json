@@ -3,6 +3,9 @@
   "build": {
     "dockerfile": "Dockerfile"
   },
+  "features": {
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+  },
   "workspaceFolder": "/workspace",
   "customizations": {
     "vscode": {
@@ -23,7 +26,9 @@
       "onAutoForward": "ignore"
     }
   },
-  "remoteUser": "root"
+  "remoteUser": "root",
+
+  "postCreateCommand": "git config --global --add safe.directory mock_SNS"
 }
 
   
