@@ -4,7 +4,8 @@
     "dockerfile": "Dockerfile"
   },
   "features": {
-    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
   },
   "workspaceFolder": "/workspace",
   "customizations": {
@@ -28,7 +29,15 @@
   },
   "remoteUser": "root",
 
-  "postCreateCommand": "git config --global --add safe.directory mock_SNS"
+  "remoteEnv": {
+    "GH_TOKEN": "${localEnv:GH_TOKEN}"
+  },
+  
+  "postCreateCommand": "git config --global --add safe.directory mock_SNS",
+
+  "mounts": [
+  "source=claude-code-config,target=/home/root/.claude,type=volume"
+  ]
 }
 
   
